@@ -522,15 +522,44 @@ async def create_change(
     group_id: Optional[int] = None,
     agent_id: Optional[int] = None,
     department_id: Optional[int] = None,
+    category: Optional[str] = None,
+    sub_category: Optional[str] = None,
+    item_category: Optional[str] = None,
     planned_start_date: Optional[str] = None,
     planned_end_date: Optional[str] = None,
     reason_for_change: Optional[str] = None,
     change_impact: Optional[str] = None,
     rollout_plan: Optional[str] = None,
     backout_plan: Optional[str] = None,
-    custom_fields: Optional[Dict[str, Any]] = None
+    custom_fields: Optional[Dict[str, Any]] = None,
+    assets: Optional[List[Dict[str, Any]]] = None
 ) -> Dict[str, Any]:
-    """Create a new change in Freshservice."""
+    """Create a new change in Freshservice.
+    
+    Args:
+        requester_id: Unique identifier of the initiator of the change (MANDATORY)
+        subject: Change subject (MANDATORY)
+        description: HTML content of the change (MANDATORY)
+        priority: Priority (1=Low, 2=Medium, 3=High, 4=Urgent) (MANDATORY)
+        impact: Impact (1=Low, 2=Medium, 3=High) (MANDATORY)
+        status: Status (1=Open, 2=Planning, 3=Awaiting Approval, 4=Pending Release, 5=Pending Review, 6=Closed) (MANDATORY)
+        risk: Risk (1=Low, 2=Medium, 3=High, 4=Very High) (MANDATORY)
+        change_type: Type (1=Minor, 2=Standard, 3=Major, 4=Emergency) (MANDATORY)
+        group_id: Agent group ID
+        agent_id: Agent ID
+        department_id: Department ID
+        category: Category of the change
+        sub_category: Sub-category of the change
+        item_category: Item category of the change
+        planned_start_date: Planned start date (ISO format)
+        planned_end_date: Planned end date (ISO format)
+        reason_for_change: Planning field - Reason for change (text/HTML)
+        change_impact: Planning field - Impact analysis (text/HTML)
+        rollout_plan: Planning field - Rollout plan (text/HTML)
+        backout_plan: Planning field - Backout plan (text/HTML)
+        custom_fields: Custom fields key-value pairs
+        assets: List of assets to associate, e.g. [{"display_id": 1}, {"display_id": 2}]
+    """
     
     try:
         priority_val = int(priority)
@@ -565,6 +594,12 @@ async def create_change(
         data["agent_id"] = agent_id
     if department_id:
         data["department_id"] = department_id
+    if category:
+        data["category"] = category
+    if sub_category:
+        data["sub_category"] = sub_category
+    if item_category:
+        data["item_category"] = item_category
     if planned_start_date:
         data["planned_start_date"] = planned_start_date
     if planned_end_date:
@@ -595,6 +630,9 @@ async def create_change(
     if custom_fields:
         data["custom_fields"] = custom_fields
 
+    if assets:
+        data["assets"] = assets
+
     url = f"https://{FRESHSERVICE_DOMAIN}/api/v2/changes"
     headers = get_auth_headers()
 
@@ -614,46 +652,134 @@ async def create_change(
 
 #UPDATE CHANGE
 @mcp.tool()
-async def update_change(change_id: int, change_fields: Dict[str, Any]) -> Dict[str, Any]:
-    """Update an existing change in Freshservice. 
+async def update_change(
+    change_id: int,
+    subject: Optional[str] = None,
+    description: Optional[str] = None,
+    priority: Optional[Union[int, str]] = None,
+    impact: Optional[Union[int, str]] = None,
+    status: Optional[Union[int, str]] = None,
+    risk: Optional[Union[int, str]] = None,
+    change_type: Optional[Union[int, str]] = None,
+    group_id: Optional[int] = None,
+    agent_id: Optional[int] = None,
+    department_id: Optional[int] = None,
+    category: Optional[str] = None,
+    sub_category: Optional[str] = None,
+    item_category: Optional[str] = None,
+    planned_start_date: Optional[str] = None,
+    planned_end_date: Optional[str] = None,
+    reason_for_change: Optional[str] = None,
+    change_impact: Optional[str] = None,
+    rollout_plan: Optional[str] = None,
+    backout_plan: Optional[str] = None,
+    custom_fields: Optional[Dict[str, Any]] = None,
+    assets: Optional[List[Dict[str, Any]]] = None
+) -> Dict[str, Any]:
+    """Update an existing change in Freshservice.
     
-    To update the change result explanation when closing a change:
-    change_fields = {
-        "status": 6,  # Closed
-        "custom_fields": {
-            "change_result_explanation": "Your explanation here"
-        }
-    }
+    Args:
+        change_id: The ID of the change to update
+        subject: Change subject
+        description: HTML content of the change
+        priority: Priority (1=Low, 2=Medium, 3=High, 4=Urgent)
+        impact: Impact (1=Low, 2=Medium, 3=High)
+        status: Status (1=Open, 2=Planning, 3=Awaiting Approval, 4=Pending Release, 5=Pending Review, 6=Closed)
+        risk: Risk (1=Low, 2=Medium, 3=High, 4=Very High)
+        change_type: Type (1=Minor, 2=Standard, 3=Major, 4=Emergency)
+        group_id: Agent group ID
+        agent_id: Agent ID
+        department_id: Department ID
+        category: Category of the change
+        sub_category: Sub-category of the change
+        item_category: Item category of the change
+        planned_start_date: Planned start date (ISO format)
+        planned_end_date: Planned end date (ISO format)
+        reason_for_change: Planning field - Reason for change (text/HTML)
+        change_impact: Planning field - Impact analysis (text/HTML)
+        rollout_plan: Planning field - Rollout plan (text/HTML)
+        backout_plan: Planning field - Backout plan (text/HTML)
+        custom_fields: Custom fields key-value pairs
+        assets: List of assets to associate, e.g. [{"display_id": 1}, {"display_id": 2}]
     """
-    if not change_fields:
-        return {"error": "No fields provided for update"}
-
     url = f"https://{FRESHSERVICE_DOMAIN}/api/v2/changes/{change_id}"
     headers = get_auth_headers()
 
-    # Extract special fields
-    custom_fields = change_fields.pop('custom_fields', {})
-    planning_fields = change_fields.pop('planning_fields', {})
-    
     update_data = {}
     
-    # Add regular fields
-    for field, value in change_fields.items():
-        update_data[field] = value
+    # Add regular fields if provided
+    if subject is not None:
+        update_data["subject"] = subject
+    if description is not None:
+        update_data["description"] = description
+    if group_id is not None:
+        update_data["group_id"] = group_id
+    if agent_id is not None:
+        update_data["agent_id"] = agent_id
+    if department_id is not None:
+        update_data["department_id"] = department_id
+    if category is not None:
+        update_data["category"] = category
+    if sub_category is not None:
+        update_data["sub_category"] = sub_category
+    if item_category is not None:
+        update_data["item_category"] = item_category
+    if planned_start_date is not None:
+        update_data["planned_start_date"] = planned_start_date
+    if planned_end_date is not None:
+        update_data["planned_end_date"] = planned_end_date
+    
+    # Handle enum fields with validation
+    if priority is not None:
+        try:
+            update_data["priority"] = int(priority)
+        except ValueError:
+            return {"error": f"Invalid priority value: {priority}"}
+    if impact is not None:
+        try:
+            update_data["impact"] = int(impact)
+        except ValueError:
+            return {"error": f"Invalid impact value: {impact}"}
+    if status is not None:
+        try:
+            update_data["status"] = int(status)
+        except ValueError:
+            return {"error": f"Invalid status value: {status}"}
+    if risk is not None:
+        try:
+            update_data["risk"] = int(risk)
+        except ValueError:
+            return {"error": f"Invalid risk value: {risk}"}
+    if change_type is not None:
+        try:
+            update_data["change_type"] = int(change_type)
+        except ValueError:
+            return {"error": f"Invalid change_type value: {change_type}"}
     
     # Add custom fields if present
     if custom_fields:
-        update_data['custom_fields'] = custom_fields
+        update_data["custom_fields"] = custom_fields
     
-    # Add planning fields with proper structure if present
+    # Add assets if present
+    if assets:
+        update_data["assets"] = assets
+    
+    # Handle planning fields
+    planning_fields = {}
+    if reason_for_change is not None:
+        planning_fields["reason_for_change"] = {"description": reason_for_change}
+    if change_impact is not None:
+        planning_fields["change_impact"] = {"description": change_impact}
+    if rollout_plan is not None:
+        planning_fields["rollout_plan"] = {"description": rollout_plan}
+    if backout_plan is not None:
+        planning_fields["backout_plan"] = {"description": backout_plan}
+    
     if planning_fields:
-        formatted_planning = {}
-        for field, value in planning_fields.items():
-            if isinstance(value, str):
-                formatted_planning[field] = {"description": value}
-            else:
-                formatted_planning[field] = value
-        update_data['planning_fields'] = formatted_planning
+        update_data["planning_fields"] = planning_fields
+
+    if not update_data:
+        return {"error": "No fields provided for update"}
 
     async with httpx.AsyncClient() as client:
         try:
@@ -694,18 +820,19 @@ async def close_change(
     """Close a change and provide the result explanation.
     This is a convenience function that updates status to Closed and sets the result explanation."""
     
-    update_data = {
-        "status": ChangeStatus.CLOSED.value,
-        "custom_fields": {
-            "change_result_explanation": change_result_explanation
-        }
+    merged_custom_fields = {
+        "change_result_explanation": change_result_explanation
     }
     
     # Merge additional custom fields if provided
     if custom_fields:
-        update_data["custom_fields"].update(custom_fields)
+        merged_custom_fields.update(custom_fields)
     
-    return await update_change(change_id, update_data)
+    return await update_change(
+        change_id=change_id,
+        status=ChangeStatus.CLOSED.value,
+        custom_fields=merged_custom_fields
+    )
 
 #DELETE CHANGE
 @mcp.tool()
