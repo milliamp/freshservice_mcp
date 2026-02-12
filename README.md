@@ -31,6 +31,9 @@ A powerful MCP (Model Context Protocol) server implementation that seamlessly in
 -  Solution Categories
 -  Solution Folders
 -  Solution Articles
+-  Assets / CMDB
+-  Asset Relationships
+-  Asset Types
 
 ## Components & Tools
 
@@ -75,6 +78,43 @@ When using `get_changes` or `filter_changes` with the `query` parameter, **the q
 - `"approval_status:1 AND status:<6"` - Approved changes that are not closed
 - `"planned_start_date:>'2025-07-14'"` - Changes starting after specific date
 - `"status:3 AND priority:1"` - High priority changes awaiting approval
+
+### Asset / CMDB Management
+
+| Tool | Description | Key Parameters |
+|------|-------------|----------------|
+| `get_assets` | List all assets with pagination | `page`, `per_page`, `include`, `order_by`, `order_type`, `trashed`, `workspace_id` |
+| `get_asset_by_id` | Retrieve single asset details | `display_id`, `include` |
+| `create_asset` | Create a new asset | `name`, `asset_type_id`, `impact`, `usage_type`, `description`, `type_fields` |
+| `update_asset` | Update an existing asset | `display_id`, `asset_fields` |
+| `delete_asset` | Delete (trash) an asset | `display_id` |
+| `delete_asset_permanently` | Permanently delete a trashed asset | `display_id` |
+| `restore_asset` | Restore a trashed asset | `display_id` |
+| `search_assets` | Search assets by attributes | `search_query`, `page`, `trashed` |
+| `filter_assets` | Filter assets with advanced queries | `filter_query`, `page`, `include` |
+| `move_asset` | Move asset to another workspace | `display_id`, `workspace_id`, `agent_id`, `group_id` |
+| `get_asset_components` | List hardware components | `display_id` |
+| `get_asset_assignment_history` | View user assignment history | `display_id` |
+| `get_asset_requests` | List associated tickets | `display_id` |
+| `get_asset_contracts` | List associated contracts | `display_id` |
+
+### Asset Relationships
+
+| Tool | Description | Key Parameters |
+|------|-------------|----------------|
+| `get_asset_relationships` | List relationships for an asset | `display_id` |
+| `get_all_relationships` | List all relationships | `page`, `per_page` |
+| `get_relationship_by_id` | View a specific relationship | `relationship_id` |
+| `create_asset_relationships` | Create relationships in bulk | `relationships` |
+| `delete_asset_relationships` | Delete relationships in bulk | `relationship_ids` |
+| `get_relationship_types` | List available relationship types | None |
+
+### Asset Types
+
+| Tool | Description | Key Parameters |
+|------|-------------|----------------|
+| `get_asset_types` | List all asset types | `page`, `per_page` |
+| `get_asset_type_by_id` | View a specific asset type | `asset_type_id` |
 
 ## Getting Started
 
@@ -139,6 +179,16 @@ Once configured, you can ask Claude to perform operations like:
 **Other Operations:**
 - "Show asset details for laptop with asset tag 'LT-2023-087'"
 - "Create a solution article about password reset procedures"
+
+**Assets / CMDB:**
+- "List all assets in the CMDB"
+- "Create a new hardware asset named 'Dell Latitude 5540' with asset type 'Laptop'"
+- "Search assets with serial number 'HSN12345'"
+- "Filter assets by state 'IN USE' in department 5"
+- "Show all components of asset #42 (CPU, memory, disk, etc.)"
+- "Show the assignment history for asset #115"
+- "List all relationships for asset #42"
+- "Move asset #99 to workspace 3"
 
 ## Testing
 
