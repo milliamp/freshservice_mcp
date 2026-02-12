@@ -3936,25 +3936,32 @@ async def create_asset_relationships(
 ) -> Dict[str, Any]:
     """Create asset relationships in bulk in Freshservice.
 
+    This is an asynchronous operation performed via background jobs.
+    The response contains a job_id which can be used with get_job_status() to track progress.
+    Supported primary_type/secondary_type values: 'asset', 'requester', 'agent', 'department', 'software'.
+
     Args:
         relationships: List of relationship objects. Each object should contain:
-            - relationship_type_id: ID of the relationship type
-            - primary_id: Display ID of the primary asset
-            - primary_type: Type of the primary item (e.g., 'asset')
-            - secondary_id: Display ID of the secondary asset
-            - secondary_type: Type of the secondary item (e.g., 'asset')
+            - relationship_type_id: ID of the relationship type (MANDATORY)
+            - primary_id: ID of the primary entity (MANDATORY)
+            - primary_type: Type of the primary entity: 'asset', 'requester', 'agent', 'department', 'software' (MANDATORY)
+            - secondary_id: ID of the secondary entity (MANDATORY)
+            - secondary_type: Type of the secondary entity: 'asset', 'requester', 'agent', 'department', 'software' (MANDATORY)
     """
-    url = f"https://{FRESHSERVICE_DOMAIN}/api/v2/relationships"
+    url = f"https://{FRESHSERVICE_DOMAIN}/api/v2/relationships/bulk-create"
     headers = get_auth_headers()
 
     async with httpx.AsyncClient() as client:
         try:
             response = await client.post(url, headers=headers, json={"relationships": relationships})
             response.raise_for_status()
+            result = response.json()
             return {
                 "success": True,
-                "message": "Relationships created successfully",
-                "data": response.json()
+                "message": "Bulk relationship creation job submitted. Use get_job_status() with the job_id to track progress.",
+                "job_id": result.get("job_id"),
+                "href": result.get("href"),
+                "data": result
             }
         except httpx.HTTPStatusError as e:
             try:
@@ -3975,12 +3982,13 @@ async def delete_asset_relationships(
     Args:
         relationship_ids: List of relationship IDs to delete
     """
-    url = f"https://{FRESHSERVICE_DOMAIN}/api/v2/relationships"
+    ids_param = ",".join(str(rid) for rid in relationship_ids)
+    url = f"https://{FRESHSERVICE_DOMAIN}/api/v2/relationships?ids={ids_param}"
     headers = get_auth_headers()
 
     async with httpx.AsyncClient() as client:
         try:
-            response = await client.request("DELETE", url, headers=headers, json={"ids": relationship_ids})
+            response = await client.delete(url, headers=headers)
 
             if response.status_code == 204:
                 return "Relationships deleted successfully"
@@ -3991,6 +3999,41 @@ async def delete_asset_relationships(
                     return f"Error: Unexpected response (status {response.status_code})"
         except Exception as e:
             return f"Error: An unexpected error occurred: {str(e)}"
+
+
+#GET BACKGROUND JOB STATUS
+@mcp.tool()
+async def get_job_status(job_id: str) -> Dict[str, Any]:
+    """Get the status of a background job in Freshservice.
+
+    Use this to track the progress of async operations like bulk relationship creation.
+    Possible status values: 'queued', 'in progress', 'partial', 'success', 'failed'.
+    - queued: Job is queued and ready to be executed
+    - in progress: Job execution started
+    - partial: Job completed with some successes and some failures
+    - success: All operations completed successfully
+    - failed: No operations succeeded
+
+    Note: The job status URL is valid for one hour after creation.
+
+    Args:
+        job_id: The job ID returned by a bulk operation (e.g., create_asset_relationships)
+    """
+    url = f"https://{FRESHSERVICE_DOMAIN}/api/v2/jobs/{job_id}"
+    headers = get_auth_headers()
+
+    async with httpx.AsyncClient() as client:
+        try:
+            response = await client.get(url, headers=headers)
+            response.raise_for_status()
+            return response.json()
+        except httpx.HTTPStatusError as e:
+            try:
+                return {"error": f"Failed to fetch job status: {str(e)}", "details": e.response.json()}
+            except Exception:
+                return {"error": f"Failed to fetch job status: {str(e)}"}
+        except Exception as e:
+            return {"error": f"An unexpected error occurred: {str(e)}"}
 
 
 #GET RELATIONSHIP TYPES
