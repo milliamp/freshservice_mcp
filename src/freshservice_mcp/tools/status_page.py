@@ -138,6 +138,27 @@ def register_status_page_tools(mcp) -> None:
     ) -> Dict[str, Any]:
         """Unified Status Page operations: maintenance windows, incidents, components.
 
+        IMPORTANT — Publishing a maintenance on the Status Page:
+            To publish a maintenance, you MUST provide either change_id or
+            maintenance_window_id. The rules are:
+
+            1. If the Change already has a maintenance_window (check via
+               manage_change action='get' → maintenance_window.id), use change_id.
+            2. If the Change has NO maintenance_window (maintenance_window is
+               empty {}), you MUST first create a Maintenance Window using
+               manage_maintenance_window action='create' with name, description,
+               start_time, end_time, workspace_id. Then use the returned
+               maintenance_window_id here.
+            3. You can also use maintenance_window_id directly if you already
+               know the MW ID.
+
+            Required fields for create_maintenance:
+              - title, description, started_at, ended_at, impacted_services
+              - impacted_services format: [{"id": <service_component_id>, "status": 5}]
+                status values: 1=Operational, 5=Under maintenance, 10=Degraded,
+                20=Partial outage, 30=Major outage
+              - Get available service component IDs via action='list_components'
+
         Args:
             action: One of:
               Pages:        'list_pages'
@@ -154,10 +175,14 @@ def register_status_page_tools(mcp) -> None:
               Subscribers:  'list_subscribers', 'get_subscriber', 'create_subscriber',
                             'update_subscriber', 'delete_subscriber'
             status_page_id: Status page ID (auto-discovered if omitted).
-            change_id: Change ID — maintenance CRUD from a change.
+            change_id: Change ID — maintenance CRUD from a change. The change
+                MUST have an associated maintenance_window or the API returns 404.
+                Check via manage_change get → if maintenance_window is empty {},
+                use manage_maintenance_window to create one first, then pass
+                maintenance_window_id instead.
             maintenance_window_id: Maintenance Window ID — maintenance CRUD from a MW.
-                Supply either change_id OR maintenance_window_id for maintenance
-                create/update/get/delete and their updates.
+                Use this when the change has no built-in MW, or for standalone MW
+                publishing. Create a MW first via manage_maintenance_window action='create'.
             ticket_id: Ticket ID — incident CRUD (required for create/update/get/delete,
                 not needed for list_incidents).
             maintenance_id: Maintenance ID (get/update/delete maintenance, maintenance updates)
@@ -249,7 +274,13 @@ def register_status_page_tools(mcp) -> None:
         if action == "create_maintenance":
             prefix = _maint_prefix(change_id, maintenance_window_id)
             if not prefix:
-                return {"error": "change_id or maintenance_window_id required for create_maintenance"}
+                return {
+                    "error": "change_id or maintenance_window_id required for create_maintenance. "
+                    "IMPORTANT: If the change has no maintenance_window (empty {}), "
+                    "you must first create one via manage_maintenance_window "
+                    "action='create' with name, description, start_time, end_time, "
+                    "workspace_id. Then pass the returned maintenance_window_id here."
+                }
             data: Dict[str, Any] = {}
             for k, v in [("title", title), ("description", description),
                          ("started_at", started_at), ("ended_at", ended_at)]:
@@ -633,4 +664,136 @@ def register_status_page_tools(mcp) -> None:
             "update_incident_update, delete_incident_update, list_incident_statuses, "
             "list_subscribers, get_subscriber, create_subscriber, update_subscriber, "
             "delete_subscriber"
+        }
+
+    @mcp.tool()
+    async def manage_maintenance_window(
+        action: str,
+        maintenance_window_id: Optional[int] = None,
+        name: Optional[str] = None,
+        description: Optional[str] = None,
+        start_time: Optional[str] = None,
+        end_time: Optional[str] = None,
+        workspace_id: Optional[int] = None,
+        alert_suppression: Optional[bool] = None,
+        page: int = 1,
+        per_page: int = 30,
+    ) -> Dict[str, Any]:
+        """Manage Freshservice Maintenance Windows.
+
+        Maintenance Windows are time-based windows used to schedule planned
+        maintenance. They can be associated with Changes and are REQUIRED
+        to publish a maintenance on a Status Page.
+
+        WORKFLOW — Publishing maintenance on a Status Page:
+            1. Create a Maintenance Window here (action='create') with name,
+               description, start_time, end_time, workspace_id.
+            2. Use the returned maintenance_window_id in manage_status_page
+               action='create_maintenance' along with title, description,
+               started_at, ended_at, and impacted_services.
+
+        Args:
+            action: One of 'list', 'get', 'create', 'update', 'delete'.
+            maintenance_window_id: MW ID (required for get/update/delete).
+            name: MW name (required for create).
+            description: MW description.
+            start_time: ISO datetime — window start (required for create).
+            end_time: ISO datetime — window end (required for create).
+            workspace_id: Workspace ID (required for create; auto-discovered
+                if omitted).
+            alert_suppression: Suppress alerts during window (default false).
+            page/per_page: Pagination (list).
+        """
+        action = action.lower().strip()
+
+        if action == "list":
+            try:
+                params: Dict[str, Any] = {"page": page, "per_page": per_page}
+                resp = await api_get("maintenance_windows", params=params)
+                resp.raise_for_status()
+                return resp.json()
+            except Exception as e:
+                return handle_error(e, "list maintenance windows")
+
+        if action == "get":
+            if not maintenance_window_id:
+                return {"error": "maintenance_window_id required for get"}
+            try:
+                resp = await api_get(f"maintenance_windows/{maintenance_window_id}")
+                resp.raise_for_status()
+                return resp.json()
+            except Exception as e:
+                return handle_error(e, "get maintenance window")
+
+        if action == "create":
+            if not name:
+                return {"error": "name required for create"}
+            if not start_time or not end_time:
+                return {"error": "start_time and end_time required for create"}
+            # Auto-resolve workspace_id if not provided
+            ws = workspace_id or await _resolve_workspace_id()
+            data: Dict[str, Any] = {
+                "name": name,
+                "start_time": start_time,
+                "end_time": end_time,
+            }
+            if ws:
+                data["workspace_id"] = ws
+            if description is not None:
+                data["description"] = description
+            if alert_suppression is not None:
+                data["alert_suppression"] = alert_suppression
+            try:
+                resp = await api_post("maintenance_windows", json=data)
+                resp.raise_for_status()
+                result = resp.json()
+                mw = result.get("maintenance_window", result)
+                return {
+                    "success": True,
+                    "maintenance_window": mw,
+                    "next_step": (
+                        f"Maintenance Window created (id={mw.get('id')}). "
+                        "To publish on the Status Page, call manage_status_page "
+                        "action='create_maintenance' with maintenance_window_id="
+                        f"{mw.get('id')}, plus title, description, started_at, "
+                        "ended_at, and impacted_services."
+                    ),
+                }
+            except Exception as e:
+                return handle_error(e, "create maintenance window")
+
+        if action == "update":
+            if not maintenance_window_id:
+                return {"error": "maintenance_window_id required for update"}
+            data = {}
+            for k, v in [("name", name), ("description", description),
+                         ("start_time", start_time), ("end_time", end_time),
+                         ("alert_suppression", alert_suppression)]:
+                if v is not None:
+                    data[k] = v
+            try:
+                resp = await api_put(
+                    f"maintenance_windows/{maintenance_window_id}", json=data
+                )
+                resp.raise_for_status()
+                return {"success": True, "maintenance_window": resp.json()}
+            except Exception as e:
+                return handle_error(e, "update maintenance window")
+
+        if action == "delete":
+            if not maintenance_window_id:
+                return {"error": "maintenance_window_id required for delete"}
+            try:
+                resp = await api_delete(
+                    f"maintenance_windows/{maintenance_window_id}"
+                )
+                if resp.status_code in (200, 204):
+                    return {"success": True, "message": "Maintenance window deleted"}
+                resp.raise_for_status()
+                return resp.json()
+            except Exception as e:
+                return handle_error(e, "delete maintenance window")
+
+        return {
+            "error": f"Unknown action '{action}'. Valid: list, get, create, update, delete"
         }

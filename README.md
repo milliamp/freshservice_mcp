@@ -132,6 +132,25 @@ Priority: 1=Low, 2=Medium, 3=High, 4=Urgent · Status: 1=Open, 2=On hold, 3=In P
 
 All actions auto-discover `status_page_id` if omitted. Maintenance CRUD requires either `change_id` **or** `maintenance_window_id` as the source entity. Incident CRUD requires `ticket_id`.
 
+> **Publishing maintenance on the Status Page — workflow:**
+>
+> 1. Check the Change: `manage_change` action=`get` → inspect `maintenance_window`
+> 2. **If `maintenance_window` has an `id`** → use `change_id` directly in `create_maintenance`
+> 3. **If `maintenance_window` is empty `{}`** → first create a MW with `manage_maintenance_window` action=`create` (name, description, start_time, end_time, workspace_id), then use the returned `maintenance_window_id` in `create_maintenance`
+> 4. Required fields for `create_maintenance`: `title`, `description`, `started_at`, `ended_at`, `impacted_services` (get component IDs via `list_components`)
+
+**`manage_maintenance_window`** — CRUD for Maintenance Windows (required to publish on status page).
+
+| Action | Required Parameters |
+| ------ | ------------------- |
+| `list` | — |
+| `get` | `maintenance_window_id` |
+| `create` | `name`, `start_time`, `end_time` (workspace_id auto-discovered) |
+| `update` | `maintenance_window_id` |
+| `delete` | `maintenance_window_id` |
+
+**`manage_status_page`** actions:
+
 | Action | Required Parameters |
 | ------ | ------------------- |
 | **Pages** | |
@@ -141,7 +160,7 @@ All actions auto-discover `status_page_id` if omitted. Maintenance CRUD requires
 | `get_component` | `component_id` |
 | **Maintenance** (from Change or MW) | |
 | `list_maintenance` | — |
-| `create_maintenance` | `change_id` or `maintenance_window_id`, `title`, `impacted_services` |
+| `create_maintenance` | `change_id` or `maintenance_window_id`, `title`, `description`, `started_at`, `ended_at`, `impacted_services` |
 | `get_maintenance` | `change_id` or `maintenance_window_id`, `maintenance_id` |
 | `update_maintenance` | `change_id` or `maintenance_window_id`, `maintenance_id` |
 | `delete_maintenance` | `change_id` or `maintenance_window_id`, `maintenance_id` |
