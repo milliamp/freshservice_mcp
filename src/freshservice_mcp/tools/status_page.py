@@ -679,6 +679,9 @@ def register_status_page_tools(mcp) -> None:
         end_time: Optional[str] = None,
         workspace_id: Optional[int] = None,
         alert_suppression: Optional[bool] = None,
+        impacted_services: Optional[List[Dict[str, Any]]] = None,
+        notifications: Optional[List[Dict[str, Any]]] = None,
+        is_private: Optional[bool] = None,
         page: int = 1,
         per_page: int = 30,
     ) -> Dict[str, Any]:
@@ -688,23 +691,28 @@ def register_status_page_tools(mcp) -> None:
         maintenance. They can be associated with Changes and are REQUIRED
         to publish a maintenance on a Status Page.
 
-        IMPORTANT WORKFLOW — Publishing maintenance on a Status Page for a Change:
-            1. Create a Maintenance Window here (action='create') with name,
-               description, start_time, end_time.
-               >>> ALWAYS pass change_id when creating a MW for a Change! <<<
-               This automatically associates the MW with the Change.
-            2. Use the returned maintenance_window_id in manage_status_page
-               action='create_maintenance' along with title, description,
-               started_at, ended_at, and impacted_services.
+        ONE-STOP WORKFLOW — Create MW + associate Change + publish on Status Page:
+            Call action='create' with:
+              - name, description, start_time, end_time (MW fields)
+              - change_id (auto-associates MW with the Change)
+              - impacted_services (triggers auto-publish on Status Page)
 
-            If change_id is provided on create, this tool will:
+            This single call will:
               a) Create the Maintenance Window
-              b) Automatically associate it with the Change via
-                 PUT /changes/{change_id} {"maintenance_window": {"id": new_id}}
-              c) Return both the MW details and the association confirmation
+              b) Associate it with the Change (if change_id provided)
+              c) Publish it on the Status Page (if impacted_services provided)
+              d) Return MW details, association status, and Status Page maintenance
 
-            ALTERNATIVE: You can also associate an existing MW with a Change
-            via manage_change action='update' with maintenance_window_id=<MW_ID>.
+            impacted_services format: [{"id": <service_component_id>, "status": N}]
+              Status: 1=Operational, 5=Under maintenance, 10=Degraded,
+                      20=Partial outage, 30=Major outage
+            To find service_component IDs, use manage_status_page
+              action='list_components'.
+
+            ALTERNATIVE: You can also do each step separately:
+              - manage_maintenance_window create (without impacted_services)
+              - manage_change update with maintenance_window_id
+              - manage_status_page create_maintenance with maintenance_window_id
 
         Args:
             action: One of 'list', 'get', 'create', 'update', 'delete'.
@@ -718,6 +726,15 @@ def register_status_page_tools(mcp) -> None:
             workspace_id: Workspace ID (required for create; auto-discovered
                 if omitted).
             alert_suppression: Suppress alerts during window (default false).
+            impacted_services: If provided on 'create', auto-publishes a
+                maintenance on the Status Page after creating the MW.
+                Format: [{"id": <service_component_id>, "status": <int>}]
+                Status: 1=Operational, 5=Under maintenance, 10=Degraded,
+                        20=Partial outage, 30=Major outage.
+            notifications: Status Page notification triggers (optional).
+                Format: [{"trigger": N, "options": {"value": V}}]
+                Trigger: 1=On start, 2=Before start, 3=On complete.
+            is_private: Mark the Status Page maintenance as private.
             page/per_page: Pagination (list).
         """
         action = action.lower().strip()
@@ -804,6 +821,46 @@ def register_status_page_tools(mcp) -> None:
                             f"failed: {assoc_e}"
                         )
 
+                # Auto-publish on Status Page if impacted_services provided
+                sp_published = False
+                sp_error = None
+                sp_maintenance = None
+                if impacted_services and mw_id:
+                    sp = await _resolve_status_page_id()
+                    if not sp:
+                        sp_error = "Could not auto-discover status_page_id"
+                    else:
+                        sp_data: Dict[str, Any] = {
+                            "title": name,
+                            "description": description or name,
+                            "started_at": start_time,
+                            "ended_at": end_time,
+                            "impacted_services": impacted_services,
+                        }
+                        if notifications is not None:
+                            sp_data["notifications"] = notifications
+                        if is_private is not None:
+                            sp_data["is_private"] = is_private
+                        try:
+                            sp_resp = await api_post(
+                                f"maintenance-windows/{mw_id}/status/pages/{sp}/maintenances",
+                                json=sp_data,
+                            )
+                            sp_resp.raise_for_status()
+                            sp_maintenance = sp_resp.json()
+                            sp_published = True
+                        except httpx.HTTPStatusError as sp_e:
+                            try:
+                                err_body = sp_e.response.json()
+                            except Exception:
+                                err_body = sp_e.response.text
+                            sp_error = (
+                                f"POST maintenance-windows/{mw_id}/status/pages/{sp}/maintenances "
+                                f"returned {sp_e.response.status_code}: {err_body}"
+                            )
+                        except Exception as sp_e:
+                            sp_error = f"Status Page publish failed: {sp_e}"
+
                 response: Dict[str, Any] = {
                     "success": True,
                     "maintenance_window": mw,
@@ -815,13 +872,36 @@ def register_status_page_tools(mcp) -> None:
                     }
                     if assoc_error:
                         response["change_association"]["error"] = assoc_error
-                response["next_step"] = (
-                    f"Maintenance Window created (id={mw_id})"
-                    + (f" and associated with Change #{change_id}" if change_associated else "")
-                    + ". To publish on the Status Page, call manage_status_page "
-                    f"action='create_maintenance' with maintenance_window_id={mw_id}, "
-                    "plus title, description, started_at, ended_at, and impacted_services."
-                )
+                if impacted_services:
+                    response["status_page"] = {
+                        "published": sp_published,
+                    }
+                    if sp_maintenance:
+                        response["status_page"]["maintenance"] = sp_maintenance
+                    if sp_error:
+                        response["status_page"]["error"] = sp_error
+
+                # Build summary
+                steps = [f"Maintenance Window created (id={mw_id})"]
+                if change_associated:
+                    steps.append(f"associated with Change #{change_id}")
+                if sp_published:
+                    steps.append("published on Status Page")
+                next_steps = []
+                if not change_associated and change_id:
+                    next_steps.append(f"Association with Change #{change_id} failed — see error")
+                if not sp_published and impacted_services:
+                    next_steps.append("Status Page publish failed — see error")
+                if not impacted_services:
+                    next_steps.append(
+                        f"To publish on Status Page, call manage_status_page "
+                        f"action='create_maintenance' with maintenance_window_id={mw_id}, "
+                        "title, description, started_at, ended_at, impacted_services. "
+                        "OR re-call this tool with impacted_services."
+                    )
+                response["summary"] = " → ".join(steps)
+                if next_steps:
+                    response["next_steps"] = next_steps
                 return response
             except Exception as e:
                 return handle_error(e, "create maintenance window")
