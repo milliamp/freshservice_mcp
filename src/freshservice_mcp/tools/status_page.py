@@ -686,10 +686,11 @@ def register_status_page_tools(mcp) -> None:
         maintenance. They can be associated with Changes and are REQUIRED
         to publish a maintenance on a Status Page.
 
-        WORKFLOW — Publishing maintenance on a Status Page for a Change:
+        IMPORTANT WORKFLOW — Publishing maintenance on a Status Page for a Change:
             1. Create a Maintenance Window here (action='create') with name,
-               description, start_time, end_time. Pass change_id to
-               AUTOMATICALLY associate the MW with the Change.
+               description, start_time, end_time.
+               >>> ALWAYS pass change_id when creating a MW for a Change! <<<
+               This automatically associates the MW with the Change.
             2. Use the returned maintenance_window_id in manage_status_page
                action='create_maintenance' along with title, description,
                started_at, ended_at, and impacted_services.
@@ -699,6 +700,9 @@ def register_status_page_tools(mcp) -> None:
               b) Automatically associate it with the Change via
                  PUT /changes/{change_id} {"maintenance_window": {"id": new_id}}
               c) Return both the MW details and the association confirmation
+
+            ALTERNATIVE: You can also associate an existing MW with a Change
+            via manage_change action='update' with maintenance_window_id=<MW_ID>.
 
         Args:
             action: One of 'list', 'get', 'create', 'update', 'delete'.

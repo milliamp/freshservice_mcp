@@ -62,6 +62,7 @@ def register_changes_tools(mcp) -> None:  # noqa: C901 – large by nature
         custom_fields: Optional[Dict[str, Any]] = None,
         assets: Optional[List[Dict[str, Any]]] = None,
         impacted_services: Optional[List[Dict[str, Any]]] = None,
+        maintenance_window_id: Optional[int] = None,
         # close
         change_result_explanation: Optional[str] = None,
         # move
@@ -107,6 +108,10 @@ def register_changes_tools(mcp) -> None:  # noqa: C901 – large by nature
             impacted_services: Impacted services list, e.g. [{"display_id": 167456}]
                 NOTE: This is different from 'assets'. Assets = associated CIs,
                 impacted_services = business services affected by the change.
+            maintenance_window_id: Maintenance Window ID to associate with
+                this Change. On create, applied via follow-up PUT. On update,
+                sent as {"maintenance_window": {"id": <value>}}.
+                Use this to link a Change to an existing Maintenance Window.
             change_result_explanation: Result explanation (close)
             workspace_id: Target workspace (move / list / filter)
             query: Filter query string (list/filter)
@@ -249,7 +254,28 @@ def register_changes_tools(mcp) -> None:  # noqa: C901 – large by nature
                             "change": created,
                         }
 
-            return {"success": True, "change": created}
+            # Step 3: associate Maintenance Window if provided
+            mw_warning = None
+            if maintenance_window_id:
+                cid = cid if planning else (created.get("change", {}).get("id") or created.get("id"))
+                if cid:
+                    try:
+                        mw_resp = await api_put(
+                            f"changes/{cid}",
+                            json={"maintenance_window": {"id": maintenance_window_id}},
+                        )
+                        mw_resp.raise_for_status()
+                        created = mw_resp.json()
+                    except Exception as mw_e:
+                        mw_warning = (
+                            f"Change created but maintenance_window association failed: {mw_e}. "
+                            "Use action=update with maintenance_window_id to retry."
+                        )
+
+            result: Dict[str, Any] = {"success": True, "change": created}
+            if mw_warning:
+                result["warning"] = mw_warning
+            return result
 
         # ---------- update ----------
         if action == "update":
@@ -278,6 +304,8 @@ def register_changes_tools(mcp) -> None:  # noqa: C901 – large by nature
                 update_data["assets"] = assets
             if impacted_services:
                 update_data["impacted_services"] = impacted_services
+            if maintenance_window_id is not None:
+                update_data["maintenance_window"] = {"id": maintenance_window_id}
             planning = {}
             for fname, fval in [("reason_for_change", reason_for_change),
                                 ("change_impact", change_impact),
