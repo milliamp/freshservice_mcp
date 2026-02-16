@@ -147,8 +147,8 @@ def register_status_page_tools(mcp) -> None:
             2. If the Change has NO maintenance_window (maintenance_window is
                empty {}), you MUST first create a Maintenance Window using
                manage_maintenance_window action='create' with name, description,
-               start_time, end_time, workspace_id. Then use the returned
-               maintenance_window_id here.
+               start_time, end_time, AND change_id (to auto-associate the MW
+               with the Change). Then use the returned maintenance_window_id here.
             3. You can also use maintenance_window_id directly if you already
                know the MW ID.
 
@@ -670,6 +670,7 @@ def register_status_page_tools(mcp) -> None:
     async def manage_maintenance_window(
         action: str,
         maintenance_window_id: Optional[int] = None,
+        change_id: Optional[int] = None,
         name: Optional[str] = None,
         description: Optional[str] = None,
         start_time: Optional[str] = None,
@@ -685,16 +686,25 @@ def register_status_page_tools(mcp) -> None:
         maintenance. They can be associated with Changes and are REQUIRED
         to publish a maintenance on a Status Page.
 
-        WORKFLOW — Publishing maintenance on a Status Page:
+        WORKFLOW — Publishing maintenance on a Status Page for a Change:
             1. Create a Maintenance Window here (action='create') with name,
-               description, start_time, end_time, workspace_id.
+               description, start_time, end_time. Pass change_id to
+               AUTOMATICALLY associate the MW with the Change.
             2. Use the returned maintenance_window_id in manage_status_page
                action='create_maintenance' along with title, description,
                started_at, ended_at, and impacted_services.
 
+            If change_id is provided on create, this tool will:
+              a) Create the Maintenance Window
+              b) Automatically associate it with the Change via
+                 PUT /changes/{change_id} {"maintenance_window": {"id": new_id}}
+              c) Return both the MW details and the association confirmation
+
         Args:
             action: One of 'list', 'get', 'create', 'update', 'delete'.
             maintenance_window_id: MW ID (required for get/update/delete).
+            change_id: Change ID — if provided on 'create', the new MW
+                is automatically associated with this Change.
             name: MW name (required for create).
             description: MW description.
             start_time: ISO datetime — window start (required for create).
@@ -748,17 +758,41 @@ def register_status_page_tools(mcp) -> None:
                 resp.raise_for_status()
                 result = resp.json()
                 mw = result.get("maintenance_window", result)
-                return {
+                mw_id = mw.get("id")
+
+                # Auto-associate MW with Change if change_id provided
+                change_associated = False
+                assoc_error = None
+                if change_id and mw_id:
+                    try:
+                        assoc_resp = await api_put(
+                            f"changes/{change_id}",
+                            json={"maintenance_window": {"id": mw_id}},
+                        )
+                        assoc_resp.raise_for_status()
+                        change_associated = True
+                    except Exception as assoc_e:
+                        assoc_error = str(assoc_e)
+
+                response: Dict[str, Any] = {
                     "success": True,
                     "maintenance_window": mw,
-                    "next_step": (
-                        f"Maintenance Window created (id={mw.get('id')}). "
-                        "To publish on the Status Page, call manage_status_page "
-                        "action='create_maintenance' with maintenance_window_id="
-                        f"{mw.get('id')}, plus title, description, started_at, "
-                        "ended_at, and impacted_services."
-                    ),
                 }
+                if change_id:
+                    response["change_association"] = {
+                        "change_id": change_id,
+                        "associated": change_associated,
+                    }
+                    if assoc_error:
+                        response["change_association"]["error"] = assoc_error
+                response["next_step"] = (
+                    f"Maintenance Window created (id={mw_id})"
+                    + (f" and associated with Change #{change_id}" if change_associated else "")
+                    + ". To publish on the Status Page, call manage_status_page "
+                    f"action='create_maintenance' with maintenance_window_id={mw_id}, "
+                    "plus title, description, started_at, ended_at, and impacted_services."
+                )
+                return response
             except Exception as e:
                 return handle_error(e, "create maintenance window")
 
