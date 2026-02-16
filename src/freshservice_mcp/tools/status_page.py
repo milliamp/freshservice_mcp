@@ -4,22 +4,46 @@ Exposes 1 tool:
   • manage_status_page — list pages, list components, CRUD maintenance, CRUD incidents
 
 Most actions require a status_page_id. If omitted, the tool auto-discovers the
-first (usually only) status page in the organization.
+workspace_id first, then resolves the first (usually only) status page.
+API path: /api/v2/status/pages?workspace_id=<id>
 """
 from typing import Any, Dict, List, Optional
 
 from ..http_client import api_delete, api_get, api_post, api_put, handle_error
 
-# Module-level cache for auto-discovered status_page_id
+# Module-level caches for auto-discovered IDs
+_cached_workspace_id: Optional[int] = None
 _cached_status_page_id: Optional[int] = None
+
+
+async def _resolve_workspace_id() -> Optional[int]:
+    """Return the primary workspace_id.
+
+    Fetches the list of workspaces and caches the first one.
+    The status/pages endpoint requires a workspace_id query-param.
+    """
+    global _cached_workspace_id
+    if _cached_workspace_id:
+        return _cached_workspace_id
+    try:
+        resp = await api_get("workspaces")
+        resp.raise_for_status()
+        data = resp.json()
+        workspaces = data.get("workspaces", data if isinstance(data, list) else [])
+        if workspaces:
+            _cached_workspace_id = workspaces[0]["id"]
+            return _cached_workspace_id
+    except Exception:
+        pass
+    return None
 
 
 async def _resolve_status_page_id(explicit_id: Optional[int]) -> Optional[int]:
     """Return the status_page_id to use.
 
     If *explicit_id* is provided, return it directly.
-    Otherwise, fetch the list of status pages and cache the first one.
-    Most Freshservice orgs have a single status page.
+    Otherwise, discover the workspace, then fetch status pages for that
+    workspace and cache the first one.  Most orgs have a single status page.
     """
     global _cached_status_page_id
     if explicit_id:
@@ -27,9 +51,14 @@ async def _resolve_status_page_id(explicit_id: Optional[int]) -> Optional[int]:
     if _cached_status_page_id:
         return _cached_status_page_id
     try:
-        resp = await api_get("status_pages")
+        workspace_id = await _resolve_workspace_id()
+        params: Dict[str, Any] = {}
+        if workspace_id:
+            params["workspace_id"] = workspace_id
+        resp = await api_get("status/pages", params=params or None)
         resp.raise_for_status()
-        pages = resp.json().get("status_pages", [])
+        data = resp.json()
+        pages = data.get("status_pages", data if isinstance(data, list) else [])
         if pages:
             _cached_status_page_id = pages[0]["id"]
             return _cached_status_page_id
@@ -121,7 +150,11 @@ def register_status_page_tools(mcp) -> None:
         # ── List status pages ──
         if action == "list_pages":
             try:
-                resp = await api_get("status_pages")
+                workspace_id = await _resolve_workspace_id()
+                params_lp: Dict[str, Any] = {"page": page, "per_page": per_page}
+                if workspace_id:
+                    params_lp["workspace_id"] = workspace_id
+                resp = await api_get("status/pages", params=params_lp)
                 resp.raise_for_status()
                 return resp.json()
             except Exception as e:
@@ -131,7 +164,7 @@ def register_status_page_tools(mcp) -> None:
         if action == "list_components":
             try:
                 resp = await api_get(
-                    f"status_pages/{status_page_id}/components",
+                    f"status/pages/{status_page_id}/components",
                     params={"page": page, "per_page": per_page},
                 )
                 resp.raise_for_status()
@@ -143,7 +176,7 @@ def register_status_page_tools(mcp) -> None:
             if not component_id:
                 return {"error": "component_id required for get_component"}
             try:
-                resp = await api_get(f"status_pages/{status_page_id}/components/{component_id}")
+                resp = await api_get(f"status/pages/{status_page_id}/components/{component_id}")
                 resp.raise_for_status()
                 return resp.json()
             except Exception as e:
@@ -153,7 +186,7 @@ def register_status_page_tools(mcp) -> None:
         if action == "list_maintenance":
             try:
                 resp = await api_get(
-                    f"status_pages/{status_page_id}/maintenances",
+                    f"status/pages/{status_page_id}/maintenances",
                     params={"page": page, "per_page": per_page},
                 )
                 resp.raise_for_status()
@@ -181,7 +214,7 @@ def register_status_page_tools(mcp) -> None:
                 data["is_private"] = is_private
             try:
                 resp = await api_post(
-                    f"status_pages/{status_page_id}/maintenances/changes/{change_id}",
+                    f"status/pages/{status_page_id}/maintenances/changes/{change_id}",
                     json=data,
                 )
                 resp.raise_for_status()
@@ -194,7 +227,7 @@ def register_status_page_tools(mcp) -> None:
                 return {"error": "change_id and maintenance_id required"}
             try:
                 resp = await api_get(
-                    f"status_pages/{status_page_id}/maintenances/changes/{change_id}/{maintenance_id}"
+                    f"status/pages/{status_page_id}/maintenances/changes/{change_id}/{maintenance_id}"
                 )
                 resp.raise_for_status()
                 return resp.json()
@@ -216,7 +249,7 @@ def register_status_page_tools(mcp) -> None:
                 data["is_private"] = is_private
             try:
                 resp = await api_put(
-                    f"status_pages/{status_page_id}/maintenances/changes/{change_id}/{maintenance_id}",
+                    f"status/pages/{status_page_id}/maintenances/changes/{change_id}/{maintenance_id}",
                     json=data,
                 )
                 resp.raise_for_status()
@@ -229,7 +262,7 @@ def register_status_page_tools(mcp) -> None:
                 return {"error": "change_id and maintenance_id required"}
             try:
                 resp = await api_delete(
-                    f"status_pages/{status_page_id}/maintenances/changes/{change_id}/{maintenance_id}"
+                    f"status/pages/{status_page_id}/maintenances/changes/{change_id}/{maintenance_id}"
                 )
                 if resp.status_code == 204:
                     return {"success": True, "message": "Maintenance deleted"}
@@ -244,7 +277,7 @@ def register_status_page_tools(mcp) -> None:
                 return {"error": "change_id and maintenance_id required"}
             try:
                 resp = await api_get(
-                    f"status_pages/{status_page_id}/maintenances/changes/{change_id}/{maintenance_id}/updates"
+                    f"status/pages/{status_page_id}/maintenances/changes/{change_id}/{maintenance_id}/updates"
                 )
                 resp.raise_for_status()
                 return resp.json()
@@ -259,7 +292,7 @@ def register_status_page_tools(mcp) -> None:
                 data["status"] = update_status
             try:
                 resp = await api_post(
-                    f"status_pages/{status_page_id}/maintenances/changes/{change_id}/{maintenance_id}/updates",
+                    f"status/pages/{status_page_id}/maintenances/changes/{change_id}/{maintenance_id}/updates",
                     json=data,
                 )
                 resp.raise_for_status()
@@ -277,7 +310,7 @@ def register_status_page_tools(mcp) -> None:
                 data["status"] = update_status
             try:
                 resp = await api_put(
-                    f"status_pages/{status_page_id}/maintenances/changes/{change_id}/{maintenance_id}/updates/{update_id}",
+                    f"status/pages/{status_page_id}/maintenances/changes/{change_id}/{maintenance_id}/updates/{update_id}",
                     json=data,
                 )
                 resp.raise_for_status()
@@ -290,7 +323,7 @@ def register_status_page_tools(mcp) -> None:
                 return {"error": "change_id, maintenance_id, and update_id required"}
             try:
                 resp = await api_delete(
-                    f"status_pages/{status_page_id}/maintenances/changes/{change_id}/{maintenance_id}/updates/{update_id}"
+                    f"status/pages/{status_page_id}/maintenances/changes/{change_id}/{maintenance_id}/updates/{update_id}"
                 )
                 if resp.status_code == 204:
                     return {"success": True, "message": "Maintenance update deleted"}
@@ -302,7 +335,7 @@ def register_status_page_tools(mcp) -> None:
         # ── Maintenance Statuses ──
         if action == "list_maintenance_statuses":
             try:
-                resp = await api_get(f"status_pages/{status_page_id}/maintenance_statuses")
+                resp = await api_get(f"status/pages/{status_page_id}/maintenance_statuses")
                 resp.raise_for_status()
                 return resp.json()
             except Exception as e:
@@ -312,7 +345,7 @@ def register_status_page_tools(mcp) -> None:
         if action == "list_incidents":
             try:
                 resp = await api_get(
-                    f"status_pages/{status_page_id}/incidents",
+                    f"status/pages/{status_page_id}/incidents",
                     params={"page": page, "per_page": per_page},
                 )
                 resp.raise_for_status()
@@ -333,7 +366,7 @@ def register_status_page_tools(mcp) -> None:
             if is_private is not None:
                 data["is_private"] = is_private
             try:
-                resp = await api_post(f"status_pages/{status_page_id}/incidents", json=data)
+                resp = await api_post(f"status/pages/{status_page_id}/incidents", json=data)
                 resp.raise_for_status()
                 return {"success": True, "incident": resp.json()}
             except Exception as e:
@@ -343,7 +376,7 @@ def register_status_page_tools(mcp) -> None:
             if not incident_id:
                 return {"error": "incident_id required"}
             try:
-                resp = await api_get(f"status_pages/{status_page_id}/incidents/{incident_id}")
+                resp = await api_get(f"status/pages/{status_page_id}/incidents/{incident_id}")
                 resp.raise_for_status()
                 return resp.json()
             except Exception as e:
@@ -363,7 +396,7 @@ def register_status_page_tools(mcp) -> None:
             if is_private is not None:
                 data["is_private"] = is_private
             try:
-                resp = await api_put(f"status_pages/{status_page_id}/incidents/{incident_id}", json=data)
+                resp = await api_put(f"status/pages/{status_page_id}/incidents/{incident_id}", json=data)
                 resp.raise_for_status()
                 return {"success": True, "incident": resp.json()}
             except Exception as e:
@@ -373,7 +406,7 @@ def register_status_page_tools(mcp) -> None:
             if not incident_id:
                 return {"error": "incident_id required"}
             try:
-                resp = await api_delete(f"status_pages/{status_page_id}/incidents/{incident_id}")
+                resp = await api_delete(f"status/pages/{status_page_id}/incidents/{incident_id}")
                 if resp.status_code == 204:
                     return {"success": True, "message": "Incident deleted"}
                 resp.raise_for_status()
@@ -386,7 +419,7 @@ def register_status_page_tools(mcp) -> None:
             if not incident_id:
                 return {"error": "incident_id required"}
             try:
-                resp = await api_get(f"status_pages/{status_page_id}/incidents/{incident_id}/updates")
+                resp = await api_get(f"status/pages/{status_page_id}/incidents/{incident_id}/updates")
                 resp.raise_for_status()
                 return resp.json()
             except Exception as e:
@@ -400,7 +433,7 @@ def register_status_page_tools(mcp) -> None:
                 data["status"] = update_status
             try:
                 resp = await api_post(
-                    f"status_pages/{status_page_id}/incidents/{incident_id}/updates",
+                    f"status/pages/{status_page_id}/incidents/{incident_id}/updates",
                     json=data,
                 )
                 resp.raise_for_status()
@@ -418,7 +451,7 @@ def register_status_page_tools(mcp) -> None:
                 data["status"] = update_status
             try:
                 resp = await api_put(
-                    f"status_pages/{status_page_id}/incidents/{incident_id}/updates/{update_id}",
+                    f"status/pages/{status_page_id}/incidents/{incident_id}/updates/{update_id}",
                     json=data,
                 )
                 resp.raise_for_status()
@@ -431,7 +464,7 @@ def register_status_page_tools(mcp) -> None:
                 return {"error": "incident_id and update_id required"}
             try:
                 resp = await api_delete(
-                    f"status_pages/{status_page_id}/incidents/{incident_id}/updates/{update_id}"
+                    f"status/pages/{status_page_id}/incidents/{incident_id}/updates/{update_id}"
                 )
                 if resp.status_code == 204:
                     return {"success": True, "message": "Incident update deleted"}
@@ -443,7 +476,7 @@ def register_status_page_tools(mcp) -> None:
         # ── Incident Statuses ──
         if action == "list_incident_statuses":
             try:
-                resp = await api_get(f"status_pages/{status_page_id}/incident_statuses")
+                resp = await api_get(f"status/pages/{status_page_id}/incident_statuses")
                 resp.raise_for_status()
                 return resp.json()
             except Exception as e:
