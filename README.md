@@ -128,24 +128,47 @@ Priority: 1=Low, 2=Medium, 3=High, 4=Urgent · Status: 1=Open, 2=On hold, 3=In P
 
 ### Status Page (`status_page` scope)
 
-**`manage_status_page`** — Maintenance windows, incidents, and service components.
+**`manage_status_page`** — Maintenance windows, incidents, service components, and subscribers.
+
+All actions auto-discover `status_page_id` if omitted. Maintenance CRUD requires either `change_id` **or** `maintenance_window_id` as the source entity. Incident CRUD requires `ticket_id`.
 
 | Action | Required Parameters |
 | ------ | ------------------- |
+| **Pages** | |
 | `list_pages` | — |
-| `list_components` | `status_page_id` |
-| `get_component` | `status_page_id`, `component_id` |
-| `create_maintenance` | `status_page_id`, `change_id` |
-| `get_maintenance` | `status_page_id`, `change_id`, `maintenance_id` |
-| `update_maintenance` | `status_page_id`, `change_id`, `maintenance_id` |
-| `delete_maintenance` | `status_page_id`, `change_id`, `maintenance_id` |
-| `list_maintenance` | `status_page_id` |
-| `create_incident` | `status_page_id`, `title` |
-| `get_incident` / `update_incident` / `delete_incident` | `status_page_id`, `incident_id` |
-| `list_incidents` | `status_page_id` |
-| `create_maintenance_update` | `status_page_id`, `change_id`, `maintenance_id`, `body` |
-| `create_incident_update` | `status_page_id`, `incident_id`, `body` |
-| `list_maintenance_statuses` / `list_incident_statuses` | `status_page_id` |
+| **Service Components** | |
+| `list_components` | — |
+| `get_component` | `component_id` |
+| **Maintenance** (from Change or MW) | |
+| `list_maintenance` | — |
+| `create_maintenance` | `change_id` or `maintenance_window_id`, `title`, `impacted_services` |
+| `get_maintenance` | `change_id` or `maintenance_window_id`, `maintenance_id` |
+| `update_maintenance` | `change_id` or `maintenance_window_id`, `maintenance_id` |
+| `delete_maintenance` | `change_id` or `maintenance_window_id`, `maintenance_id` |
+| **Maintenance Updates** | |
+| `list_maintenance_updates` | `change_id` or `maintenance_window_id`, `maintenance_id` |
+| `create_maintenance_update` | `change_id` or `maintenance_window_id`, `maintenance_id`, `body` |
+| `update_maintenance_update` | `change_id` or `maintenance_window_id`, `maintenance_id`, `update_id` |
+| `delete_maintenance_update` | `change_id` or `maintenance_window_id`, `maintenance_id`, `update_id` |
+| **Incidents** (from Ticket) | |
+| `list_incidents` | — |
+| `create_incident` | `ticket_id`, `title` |
+| `get_incident` / `update_incident` / `delete_incident` | `ticket_id`, `incident_id` |
+| **Incident Updates** | |
+| `list_incident_updates` | `ticket_id`, `incident_id` |
+| `create_incident_update` | `ticket_id`, `incident_id`, `body` |
+| `update_incident_update` | `ticket_id`, `incident_id`, `update_id` |
+| `delete_incident_update` | `ticket_id`, `incident_id`, `update_id` |
+| **Statuses** | |
+| `list_maintenance_statuses` / `list_incident_statuses` | — |
+| **Subscribers** | |
+| `list_subscribers` | — |
+| `get_subscriber` | `subscriber_id` |
+| `create_subscriber` | `email` |
+| `update_subscriber` | `subscriber_id` |
+| `delete_subscriber` | `subscriber_id` |
+
+Key fields: `started_at` (ISO datetime), `ended_at`, `impacted_services` (`[{id, status}]`), `notifications` (`[{trigger, options}]`), `description`.
 
 ### Departments & Locations (`departments` scope)
 
