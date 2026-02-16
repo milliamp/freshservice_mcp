@@ -61,6 +61,7 @@ def register_changes_tools(mcp) -> None:  # noqa: C901 – large by nature
         backout_plan: Optional[str] = None,
         custom_fields: Optional[Dict[str, Any]] = None,
         assets: Optional[List[Dict[str, Any]]] = None,
+        impacted_services: Optional[List[Dict[str, Any]]] = None,
         # close
         change_result_explanation: Optional[str] = None,
         # move
@@ -102,7 +103,10 @@ def register_changes_tools(mcp) -> None:  # noqa: C901 – large by nature
             rollout_plan: Planning field — rollout plan (text/HTML)
             backout_plan: Planning field — backout plan (text/HTML)
             custom_fields: Custom fields dict
-            assets: Assets list, e.g. [{"display_id": 1}]
+            assets: Assets list (associated CIs), e.g. [{"display_id": 1}]
+            impacted_services: Impacted services list, e.g. [{"display_id": 167456}]
+                NOTE: This is different from 'assets'. Assets = associated CIs,
+                impacted_services = business services affected by the change.
             change_result_explanation: Result explanation (close)
             workspace_id: Target workspace (move / list / filter)
             query: Filter query string (list/filter)
@@ -198,7 +202,17 @@ def register_changes_tools(mcp) -> None:  # noqa: C901 – large by nature
                 if v is not None:
                     data[k] = v
 
-            # planning fields
+            if custom_fields:
+                data["custom_fields"] = custom_fields
+            if assets:
+                data["assets"] = assets
+            if impacted_services:
+                data["impacted_services"] = impacted_services
+
+            # Collect planning fields for a follow-up update.
+            # Freshservice API returns HTTP 500 when planning_fields are
+            # included in the creation payload (known API limitation),
+            # so we transparently create first, then update with planning.
             planning = {}
             for fname, fval in [("reason_for_change", reason_for_change),
                                 ("change_impact", change_impact),
@@ -206,19 +220,36 @@ def register_changes_tools(mcp) -> None:  # noqa: C901 – large by nature
                                 ("backout_plan", backout_plan)]:
                 if fval is not None:
                     planning[fname] = {"description": fval}
-            if planning:
-                data["planning_fields"] = planning
-            if custom_fields:
-                data["custom_fields"] = custom_fields
-            if assets:
-                data["assets"] = assets
 
             try:
                 resp = await api_post("changes", json=data)
                 resp.raise_for_status()
-                return {"success": True, "change": resp.json()}
+                created = resp.json()
             except Exception as e:
                 return handle_error(e, "create change")
+
+            # Step 2: apply planning fields if any were provided
+            if planning:
+                cid = created.get("change", {}).get("id") or created.get("id")
+                if cid:
+                    try:
+                        resp2 = await api_put(
+                            f"changes/{cid}",
+                            json={"planning_fields": planning},
+                        )
+                        resp2.raise_for_status()
+                        created = resp2.json()
+                    except Exception:
+                        # Planning update failed but the change was created.
+                        # Return the created change with a warning.
+                        return {
+                            "success": True,
+                            "warning": "Change created but planning fields could not be set. "
+                                       "Use action=update to set them separately.",
+                            "change": created,
+                        }
+
+            return {"success": True, "change": created}
 
         # ---------- update ----------
         if action == "update":
@@ -245,6 +276,8 @@ def register_changes_tools(mcp) -> None:  # noqa: C901 – large by nature
                 update_data["custom_fields"] = custom_fields
             if assets:
                 update_data["assets"] = assets
+            if impacted_services:
+                update_data["impacted_services"] = impacted_services
             planning = {}
             for fname, fval in [("reason_for_change", reason_for_change),
                                 ("change_impact", change_impact),
