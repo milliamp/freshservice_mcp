@@ -770,7 +770,18 @@ def register_status_page_tools(mcp) -> None:
                             json={"maintenance_window": {"id": mw_id}},
                         )
                         assoc_resp.raise_for_status()
-                        change_associated = True
+                        # Verify association took effect
+                        verify = assoc_resp.json()
+                        chg = verify.get("change", verify)
+                        mw_check = chg.get("maintenance_window", {})
+                        if mw_check.get("id") == mw_id:
+                            change_associated = True
+                        else:
+                            assoc_error = (
+                                f"PUT returned 200 but maintenance_window.id "
+                                f"is {mw_check.get('id')} (expected {mw_id}). "
+                                f"change_window_id={chg.get('change_window_id')}"
+                            )
                     except Exception as assoc_e:
                         assoc_error = str(assoc_e)
 
