@@ -10,6 +10,8 @@ Exposes 5 tools instead of the original 33:
 import urllib.parse
 from typing import Any, Dict, List, Optional, Union
 
+import httpx
+
 from ..config import (
     ChangeImpact,
     ChangePriority,
@@ -259,17 +261,28 @@ def register_changes_tools(mcp) -> None:  # noqa: C901 – large by nature
             if maintenance_window_id:
                 cid = cid if planning else (created.get("change", {}).get("id") or created.get("id"))
                 if cid:
+                    mw_payload = {"maintenance_window": {"id": maintenance_window_id}}
                     try:
                         mw_resp = await api_put(
                             f"changes/{cid}",
-                            json={"maintenance_window": {"id": maintenance_window_id}},
+                            json=mw_payload,
                         )
                         mw_resp.raise_for_status()
                         created = mw_resp.json()
+                    except httpx.HTTPStatusError as mw_e:
+                        try:
+                            err_body = mw_e.response.json()
+                        except Exception:
+                            err_body = mw_e.response.text
+                        mw_warning = (
+                            f"Change created but MW association failed: "
+                            f"PUT /changes/{cid} with {mw_payload} → "
+                            f"{mw_e.response.status_code}: {err_body}"
+                        )
                     except Exception as mw_e:
                         mw_warning = (
-                            f"Change created but maintenance_window association failed: {mw_e}. "
-                            "Use action=update with maintenance_window_id to retry."
+                            f"Change created but MW association failed: "
+                            f"PUT /changes/{cid} with {mw_payload} → {mw_e}"
                         )
 
             result: Dict[str, Any] = {"success": True, "change": created}

@@ -35,6 +35,8 @@ URL patterns per official Freshservice API v2 docs
 """
 from typing import Any, Dict, List, Optional
 
+import httpx
+
 from ..http_client import api_delete, api_get, api_post, api_put, handle_error
 
 # Module-level caches for auto-discovered IDs
@@ -768,10 +770,11 @@ def register_status_page_tools(mcp) -> None:
                 change_associated = False
                 assoc_error = None
                 if change_id and mw_id:
+                    assoc_payload = {"maintenance_window": {"id": mw_id}}
                     try:
                         assoc_resp = await api_put(
                             f"changes/{change_id}",
-                            json={"maintenance_window": {"id": mw_id}},
+                            json=assoc_payload,
                         )
                         assoc_resp.raise_for_status()
                         # Verify association took effect
@@ -786,8 +789,20 @@ def register_status_page_tools(mcp) -> None:
                                 f"is {mw_check.get('id')} (expected {mw_id}). "
                                 f"change_window_id={chg.get('change_window_id')}"
                             )
+                    except httpx.HTTPStatusError as assoc_e:
+                        try:
+                            err_body = assoc_e.response.json()
+                        except Exception:
+                            err_body = assoc_e.response.text
+                        assoc_error = (
+                            f"PUT /changes/{change_id} with {assoc_payload} "
+                            f"returned {assoc_e.response.status_code}: {err_body}"
+                        )
                     except Exception as assoc_e:
-                        assoc_error = str(assoc_e)
+                        assoc_error = (
+                            f"PUT /changes/{change_id} with {assoc_payload} "
+                            f"failed: {assoc_e}"
+                        )
 
                 response: Dict[str, Any] = {
                     "success": True,
