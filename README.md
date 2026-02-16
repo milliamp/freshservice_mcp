@@ -35,6 +35,7 @@ The server uses a modular scope-based architecture. Each scope registers one or 
 | `misc` | `manage_canned_response`, `manage_workspace` | Canned responses, workspaces |
 
 Additionally, 2 **discovery tools** are always loaded:
+
 - `discover_form_fields` — Discover custom field definitions for any entity type
 - `clear_field_cache` — Clear cached field definitions
 
@@ -72,7 +73,6 @@ Each tool uses a unified `action` parameter to select the operation. Pass the ac
 | `close` | `change_id` | `body` (result explanation) |
 
 > *`planning_fields` on create are handled transparently via a 2-step process (POST + PUT) to work around a Freshservice API limitation.
-
 > **`impacted_services`** is distinct from `assets`: use `assets` for CI associations (`[{"display_id": N}]`) and `impacted_services` for business service impact declarations (`[{"id": N, "status": 1}]`). Service statuses: 1=Operational, 5=Under maintenance, 10=Degraded, 20=Partial outage, 30=Major outage.
 
 **`manage_change_note`** — Actions: `list`, `get`, `create`, `update`, `delete`
@@ -177,11 +177,12 @@ Priority: 1=Low, 2=Medium, 3=High, 4=Urgent · Status: 1=Open, 2=On hold, 3=In P
 
 When using `filter` actions, **the query string is automatically wrapped in double quotes** by the server. Pass the raw query:
 
-```
+```text
 action: "filter", query: "status:3 AND priority:1"
 ```
 
 **Common filter examples:**
+
 - `"status:3"` — Changes awaiting approval
 - `"priority:3 AND status:1"` — High priority open problems
 - `"planned_start_date:>'2025-07-14'"` — Changes starting after a date
@@ -203,6 +204,7 @@ npx -y @smithery/cli install @effytech/freshservice_mcp --client claude
 ### Configuration
 
 Generate your Freshservice API key:
+
 1. Navigate to **Profile Settings → API Settings**
 2. Copy your API key
 
@@ -269,11 +271,13 @@ Add to `.vscode/mcp.json` in your workspace:
 By default all 12 scopes are loaded (30 tools). To load only specific scopes:
 
 **Via environment variable:**
+
 ```bash
 FRESHSERVICE_SCOPES=tickets,changes,status_page freshservice-mcp
 ```
 
 **Via CLI argument:**
+
 ```bash
 freshservice-mcp --scope tickets changes problems
 ```
@@ -285,33 +289,40 @@ This is useful when you have many MCP servers and need to stay under client tool
 Once configured, you can ask your AI assistant to:
 
 **Tickets:**
+
 - "Create a high priority incident ticket about network connectivity issues in Marketing"
 - "List all critical incidents reported in the last 24 hours"
 - "Update ticket #12345 status to resolved"
 
 **Changes:**
+
 - "Create a change request for scheduled server maintenance next Tuesday at 2 AM"
 - "Close change #5092 with result explanation 'Successfully deployed to production'"
 - "List all pending changes awaiting approval"
 
 **Problems:**
+
 - "Create a problem for recurring VPN disconnections, assign to Network team"
 - "Add an analysis note to problem #301 with root cause findings"
 
 **Releases:**
+
 - "Create a minor release for the Q1 frontend deployment, planned for March 15-16"
 - "List all in-progress releases"
 
 **Status Page / Maintenance:**
+
 - "Create a maintenance window on the status page linked to change #5100"
 - "List all service components on our public status page"
 
 **Assets / CMDB:**
+
 - "List all assets in the CMDB"
 - "Create a new hardware asset named 'Dell Latitude 5540'"
 - "Show all relationships for asset #42"
 
 **Departments & Locations:**
+
 - "List all departments"
 - "Create a new location 'Paris Office' with address details"
 

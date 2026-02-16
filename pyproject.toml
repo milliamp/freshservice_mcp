@@ -25,4 +25,3 @@ email = "vijay.r@effy.co.in"
 
 [project.scripts]
 freshservice-mcp = "freshservice_mcp.server:main"
-

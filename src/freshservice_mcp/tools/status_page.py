@@ -2,10 +2,40 @@
 
 Exposes 1 tool:
   • manage_status_page — list pages, list components, CRUD maintenance, CRUD incidents
+
+Most actions require a status_page_id. If omitted, the tool auto-discovers the
+first (usually only) status page in the organization.
 """
 from typing import Any, Dict, List, Optional
 
 from ..http_client import api_delete, api_get, api_post, api_put, handle_error
+
+# Module-level cache for auto-discovered status_page_id
+_cached_status_page_id: Optional[int] = None
+
+
+async def _resolve_status_page_id(explicit_id: Optional[int]) -> Optional[int]:
+    """Return the status_page_id to use.
+
+    If *explicit_id* is provided, return it directly.
+    Otherwise, fetch the list of status pages and cache the first one.
+    Most Freshservice orgs have a single status page.
+    """
+    global _cached_status_page_id
+    if explicit_id:
+        return explicit_id
+    if _cached_status_page_id:
+        return _cached_status_page_id
+    try:
+        resp = await api_get("status_pages")
+        resp.raise_for_status()
+        pages = resp.json().get("status_pages", [])
+        if pages:
+            _cached_status_page_id = pages[0]["id"]
+            return _cached_status_page_id
+    except Exception:
+        pass
+    return None
 
 
 def register_status_page_tools(mcp) -> None:
@@ -55,7 +85,8 @@ def register_status_page_tools(mcp) -> None:
               Incident Updates: 'create_incident_update', 'list_incident_updates',
                             'update_incident_update', 'delete_incident_update'
               Statuses:     'list_incident_statuses', 'list_maintenance_statuses'
-            status_page_id: Status page ID (required for most actions)
+            status_page_id: Status page ID. If omitted, auto-discovers the first
+                status page in the org (most orgs have exactly one).
             change_id: Change ID to link maintenance to (create_maintenance)
             maintenance_id: Maintenance ID (get/update/delete maintenance, maintenance updates)
             incident_id: Incident ID (get/update/delete incident, incident updates)
@@ -78,6 +109,15 @@ def register_status_page_tools(mcp) -> None:
         """
         action = action.lower().strip()
 
+        # Auto-resolve status_page_id for actions that need it
+        if action != "list_pages":
+            status_page_id = await _resolve_status_page_id(status_page_id)
+            if not status_page_id:
+                return {
+                    "error": "Could not determine status_page_id. "
+                    "Use action='list_pages' first, or pass status_page_id explicitly."
+                }
+
         # ── List status pages ──
         if action == "list_pages":
             try:
@@ -89,8 +129,6 @@ def register_status_page_tools(mcp) -> None:
 
         # ── Components ──
         if action == "list_components":
-            if not status_page_id:
-                return {"error": "status_page_id required for list_components"}
             try:
                 resp = await api_get(
                     f"status_pages/{status_page_id}/components",
@@ -102,8 +140,8 @@ def register_status_page_tools(mcp) -> None:
                 return handle_error(e, "list status page components")
 
         if action == "get_component":
-            if not status_page_id or not component_id:
-                return {"error": "status_page_id and component_id required for get_component"}
+            if not component_id:
+                return {"error": "component_id required for get_component"}
             try:
                 resp = await api_get(f"status_pages/{status_page_id}/components/{component_id}")
                 resp.raise_for_status()
@@ -113,8 +151,6 @@ def register_status_page_tools(mcp) -> None:
 
         # ── Maintenance — CRUD ──
         if action == "list_maintenance":
-            if not status_page_id:
-                return {"error": "status_page_id required for list_maintenance"}
             try:
                 resp = await api_get(
                     f"status_pages/{status_page_id}/maintenances",
@@ -126,8 +162,8 @@ def register_status_page_tools(mcp) -> None:
                 return handle_error(e, "list maintenances")
 
         if action == "create_maintenance":
-            if not status_page_id or not change_id:
-                return {"error": "status_page_id and change_id required for create_maintenance"}
+            if not change_id:
+                return {"error": "change_id required for create_maintenance"}
             data: Dict[str, Any] = {}
             if title:
                 data["title"] = title
@@ -154,8 +190,8 @@ def register_status_page_tools(mcp) -> None:
                 return handle_error(e, "create maintenance")
 
         if action == "get_maintenance":
-            if not status_page_id or not change_id or not maintenance_id:
-                return {"error": "status_page_id, change_id, and maintenance_id required"}
+            if not change_id or not maintenance_id:
+                return {"error": "change_id and maintenance_id required"}
             try:
                 resp = await api_get(
                     f"status_pages/{status_page_id}/maintenances/changes/{change_id}/{maintenance_id}"
@@ -166,8 +202,8 @@ def register_status_page_tools(mcp) -> None:
                 return handle_error(e, "get maintenance")
 
         if action == "update_maintenance":
-            if not status_page_id or not change_id or not maintenance_id:
-                return {"error": "status_page_id, change_id, and maintenance_id required"}
+            if not change_id or not maintenance_id:
+                return {"error": "change_id and maintenance_id required"}
             data = {}
             for k, v in [("title", title), ("description", description),
                          ("scheduled_start_time", scheduled_start_time),
@@ -189,8 +225,8 @@ def register_status_page_tools(mcp) -> None:
                 return handle_error(e, "update maintenance")
 
         if action == "delete_maintenance":
-            if not status_page_id or not change_id or not maintenance_id:
-                return {"error": "status_page_id, change_id, and maintenance_id required"}
+            if not change_id or not maintenance_id:
+                return {"error": "change_id and maintenance_id required"}
             try:
                 resp = await api_delete(
                     f"status_pages/{status_page_id}/maintenances/changes/{change_id}/{maintenance_id}"
@@ -204,8 +240,8 @@ def register_status_page_tools(mcp) -> None:
 
         # ── Maintenance Updates ──
         if action == "list_maintenance_updates":
-            if not status_page_id or not change_id or not maintenance_id:
-                return {"error": "status_page_id, change_id, and maintenance_id required"}
+            if not change_id or not maintenance_id:
+                return {"error": "change_id and maintenance_id required"}
             try:
                 resp = await api_get(
                     f"status_pages/{status_page_id}/maintenances/changes/{change_id}/{maintenance_id}/updates"
@@ -216,8 +252,8 @@ def register_status_page_tools(mcp) -> None:
                 return handle_error(e, "list maintenance updates")
 
         if action == "create_maintenance_update":
-            if not status_page_id or not change_id or not maintenance_id or not body:
-                return {"error": "status_page_id, change_id, maintenance_id, and body required"}
+            if not change_id or not maintenance_id or not body:
+                return {"error": "change_id, maintenance_id, and body required"}
             data = {"body": body}
             if update_status:
                 data["status"] = update_status
@@ -232,8 +268,8 @@ def register_status_page_tools(mcp) -> None:
                 return handle_error(e, "create maintenance update")
 
         if action == "update_maintenance_update":
-            if not status_page_id or not change_id or not maintenance_id or not update_id:
-                return {"error": "status_page_id, change_id, maintenance_id, and update_id required"}
+            if not change_id or not maintenance_id or not update_id:
+                return {"error": "change_id, maintenance_id, and update_id required"}
             data = {}
             if body:
                 data["body"] = body
@@ -250,8 +286,8 @@ def register_status_page_tools(mcp) -> None:
                 return handle_error(e, "update maintenance update")
 
         if action == "delete_maintenance_update":
-            if not status_page_id or not change_id or not maintenance_id or not update_id:
-                return {"error": "status_page_id, change_id, maintenance_id, and update_id required"}
+            if not change_id or not maintenance_id or not update_id:
+                return {"error": "change_id, maintenance_id, and update_id required"}
             try:
                 resp = await api_delete(
                     f"status_pages/{status_page_id}/maintenances/changes/{change_id}/{maintenance_id}/updates/{update_id}"
@@ -265,8 +301,6 @@ def register_status_page_tools(mcp) -> None:
 
         # ── Maintenance Statuses ──
         if action == "list_maintenance_statuses":
-            if not status_page_id:
-                return {"error": "status_page_id required"}
             try:
                 resp = await api_get(f"status_pages/{status_page_id}/maintenance_statuses")
                 resp.raise_for_status()
@@ -276,8 +310,6 @@ def register_status_page_tools(mcp) -> None:
 
         # ── Incidents — CRUD ──
         if action == "list_incidents":
-            if not status_page_id:
-                return {"error": "status_page_id required"}
             try:
                 resp = await api_get(
                     f"status_pages/{status_page_id}/incidents",
@@ -289,8 +321,8 @@ def register_status_page_tools(mcp) -> None:
                 return handle_error(e, "list incidents")
 
         if action == "create_incident":
-            if not status_page_id or not title:
-                return {"error": "status_page_id and title required for create_incident"}
+            if not title:
+                return {"error": "title required for create_incident"}
             data = {"title": title}
             for k, v in [("description", description), ("start_time", start_time),
                          ("end_time", end_time), ("notification", notification)]:
@@ -308,8 +340,8 @@ def register_status_page_tools(mcp) -> None:
                 return handle_error(e, "create incident")
 
         if action == "get_incident":
-            if not status_page_id or not incident_id:
-                return {"error": "status_page_id and incident_id required"}
+            if not incident_id:
+                return {"error": "incident_id required"}
             try:
                 resp = await api_get(f"status_pages/{status_page_id}/incidents/{incident_id}")
                 resp.raise_for_status()
@@ -318,8 +350,8 @@ def register_status_page_tools(mcp) -> None:
                 return handle_error(e, "get incident")
 
         if action == "update_incident":
-            if not status_page_id or not incident_id:
-                return {"error": "status_page_id and incident_id required"}
+            if not incident_id:
+                return {"error": "incident_id required"}
             data = {}
             for k, v in [("title", title), ("description", description),
                          ("start_time", start_time), ("end_time", end_time),
@@ -338,8 +370,8 @@ def register_status_page_tools(mcp) -> None:
                 return handle_error(e, "update incident")
 
         if action == "delete_incident":
-            if not status_page_id or not incident_id:
-                return {"error": "status_page_id and incident_id required"}
+            if not incident_id:
+                return {"error": "incident_id required"}
             try:
                 resp = await api_delete(f"status_pages/{status_page_id}/incidents/{incident_id}")
                 if resp.status_code == 204:
@@ -351,8 +383,8 @@ def register_status_page_tools(mcp) -> None:
 
         # ── Incident Updates ──
         if action == "list_incident_updates":
-            if not status_page_id or not incident_id:
-                return {"error": "status_page_id and incident_id required"}
+            if not incident_id:
+                return {"error": "incident_id required"}
             try:
                 resp = await api_get(f"status_pages/{status_page_id}/incidents/{incident_id}/updates")
                 resp.raise_for_status()
@@ -361,8 +393,8 @@ def register_status_page_tools(mcp) -> None:
                 return handle_error(e, "list incident updates")
 
         if action == "create_incident_update":
-            if not status_page_id or not incident_id or not body:
-                return {"error": "status_page_id, incident_id, and body required"}
+            if not incident_id or not body:
+                return {"error": "incident_id and body required"}
             data = {"body": body}
             if update_status:
                 data["status"] = update_status
@@ -377,8 +409,8 @@ def register_status_page_tools(mcp) -> None:
                 return handle_error(e, "create incident update")
 
         if action == "update_incident_update":
-            if not status_page_id or not incident_id or not update_id:
-                return {"error": "status_page_id, incident_id, and update_id required"}
+            if not incident_id or not update_id:
+                return {"error": "incident_id and update_id required"}
             data = {}
             if body:
                 data["body"] = body
@@ -395,8 +427,8 @@ def register_status_page_tools(mcp) -> None:
                 return handle_error(e, "update incident update")
 
         if action == "delete_incident_update":
-            if not status_page_id or not incident_id or not update_id:
-                return {"error": "status_page_id, incident_id, and update_id required"}
+            if not incident_id or not update_id:
+                return {"error": "incident_id and update_id required"}
             try:
                 resp = await api_delete(
                     f"status_pages/{status_page_id}/incidents/{incident_id}/updates/{update_id}"
@@ -410,8 +442,6 @@ def register_status_page_tools(mcp) -> None:
 
         # ── Incident Statuses ──
         if action == "list_incident_statuses":
-            if not status_page_id:
-                return {"error": "status_page_id required"}
             try:
                 resp = await api_get(f"status_pages/{status_page_id}/incident_statuses")
                 resp.raise_for_status()
