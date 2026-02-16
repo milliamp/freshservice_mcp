@@ -3,7 +3,7 @@ name = "freshservice-mcp"
 version = "1.0.0"
 description = "An MCP server for Freshservice"
 readme = "README.md"
-requires-python = ">=3.13"
+requires-python = ">=3.10"
 dependencies = [
     "build>=1.2.2.post1",
     "httpx==0.28.1",
