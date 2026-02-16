@@ -7,12 +7,26 @@ from typing import Optional, Dict, Any
 from .config import FRESHSERVICE_DOMAIN, FRESHSERVICE_APIKEY
 
 
+def _auth_header() -> str:
+    """Return the Basic-auth header value."""
+    return f"Basic {base64.b64encode(f'{FRESHSERVICE_APIKEY}:X'.encode()).decode()}"
+
+
 def get_auth_headers() -> Dict[str, str]:
-    """Return Basic-auth + JSON content-type headers."""
+    """Return Basic-auth + JSON content-type headers (for POST/PUT)."""
     return {
-        "Authorization": f"Basic {base64.b64encode(f'{FRESHSERVICE_APIKEY}:X'.encode()).decode()}",
+        "Authorization": _auth_header(),
         "Content-Type": "application/json",
     }
+
+
+def get_auth_headers_readonly() -> Dict[str, str]:
+    """Return Basic-auth headers only (for GET/DELETE).
+
+    Some Freshservice endpoints (e.g. status/pages) reject GET requests
+    that include Content-Type: application/json.
+    """
+    return {"Authorization": _auth_header()}
 
 
 def parse_link_header(link_header: str) -> Dict[str, Optional[int]]:
@@ -38,7 +52,7 @@ def api_url(path: str) -> str:
 async def api_get(path: str, params: Optional[Dict[str, Any]] = None) -> httpx.Response:
     """Perform an authenticated GET request."""
     async with httpx.AsyncClient() as client:
-        return await client.get(api_url(path), headers=get_auth_headers(), params=params)
+        return await client.get(api_url(path), headers=get_auth_headers_readonly(), params=params)
 
 
 async def api_post(path: str, json: Optional[Dict[str, Any]] = None) -> httpx.Response:
@@ -56,7 +70,7 @@ async def api_put(path: str, json: Optional[Dict[str, Any]] = None) -> httpx.Res
 async def api_delete(path: str) -> httpx.Response:
     """Perform an authenticated DELETE request."""
     async with httpx.AsyncClient() as client:
-        return await client.delete(api_url(path), headers=get_auth_headers())
+        return await client.delete(api_url(path), headers=get_auth_headers_readonly())
 
 
 def handle_error(e: Exception, action: str = "request") -> Dict[str, Any]:
