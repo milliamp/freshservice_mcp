@@ -10,10 +10,19 @@ from typing import Any, Dict, List, Optional, Union
 
 import httpx
 
-from ..http_client import api_delete, api_get, api_post, api_put, handle_error
+from ..http_client import (
+    api_delete, api_get, api_post, api_put,
+    get_auth_headers, handle_error,
+)
 
 # Base path for NewGen project management
 _PM = "pm/projects"
+
+# NewGen PM endpoints require Content-Type on ALL verbs (incl. GET/DELETE).
+
+def _pm_headers() -> Dict[str, str]:
+    """Return headers with Content-Type for PM endpoints."""
+    return get_auth_headers()
 
 
 def register_project_tools(mcp) -> None:  # noqa: C901
@@ -98,7 +107,7 @@ def register_project_tools(mcp) -> None:  # noqa: C901
             if filter:
                 params["filter"] = filter
             try:
-                resp = await api_get(_PM, params=params)
+                resp = await api_get(_PM, params=params, headers=_pm_headers())
                 resp.raise_for_status()
                 return resp.json()
             except Exception as e:
@@ -109,7 +118,7 @@ def register_project_tools(mcp) -> None:  # noqa: C901
             if not project_id:
                 return {"error": "project_id required for get"}
             try:
-                resp = await api_get(f"{_PM}/{project_id}")
+                resp = await api_get(f"{_PM}/{project_id}", headers=_pm_headers())
                 resp.raise_for_status()
                 return resp.json()
             except Exception as e:
@@ -169,7 +178,7 @@ def register_project_tools(mcp) -> None:  # noqa: C901
             if not project_id:
                 return {"error": "project_id required for delete"}
             try:
-                resp = await api_delete(f"{_PM}/{project_id}")
+                resp = await api_delete(f"{_PM}/{project_id}", headers=_pm_headers())
                 if resp.status_code == 204:
                     return {"success": True, "message": "Project deleted"}
                 resp.raise_for_status()
@@ -206,7 +215,7 @@ def register_project_tools(mcp) -> None:  # noqa: C901
         # ---------- get_fields ----------
         if action == "get_fields":
             try:
-                resp = await api_get("pm/project-fields")
+                resp = await api_get("pm/project-fields", headers=_pm_headers())
                 resp.raise_for_status()
                 return resp.json()
             except Exception as e:
@@ -215,7 +224,7 @@ def register_project_tools(mcp) -> None:  # noqa: C901
         # ---------- get_templates ----------
         if action == "get_templates":
             try:
-                resp = await api_get("pm/project_templates")
+                resp = await api_get("pm/project_templates", headers=_pm_headers())
                 resp.raise_for_status()
                 return resp.json()
             except Exception as e:
@@ -245,7 +254,7 @@ def register_project_tools(mcp) -> None:  # noqa: C901
             if not project_id:
                 return {"error": "project_id required for get_memberships"}
             try:
-                resp = await api_get(f"{_PM}/{project_id}/memberships")
+                resp = await api_get(f"{_PM}/{project_id}/memberships", headers=_pm_headers())
                 resp.raise_for_status()
                 return resp.json()
             except Exception as e:
@@ -280,7 +289,7 @@ def register_project_tools(mcp) -> None:  # noqa: C901
                     "error": "module_name required — one of: tickets, problems, changes, assets"
                 }
             try:
-                resp = await api_get(f"{_PM}/{project_id}/{module_name}")
+                resp = await api_get(f"{_PM}/{project_id}/{module_name}", headers=_pm_headers())
                 resp.raise_for_status()
                 return resp.json()
             except Exception as e:
@@ -297,7 +306,7 @@ def register_project_tools(mcp) -> None:  # noqa: C901
             if not association_id:
                 return {"error": "association_id required — the ID of the entity to dissociate"}
             try:
-                resp = await api_delete(f"{_PM}/{project_id}/{module_name}/{association_id}")
+                resp = await api_delete(f"{_PM}/{project_id}/{module_name}/{association_id}", headers=_pm_headers())
                 if resp.status_code == 204:
                     return {"success": True, "message": f"{module_name} association deleted"}
                 resp.raise_for_status()
@@ -310,7 +319,7 @@ def register_project_tools(mcp) -> None:  # noqa: C901
             if not project_id:
                 return {"error": "project_id required for get_versions"}
             try:
-                resp = await api_get(f"{_PM}/{project_id}/versions")
+                resp = await api_get(f"{_PM}/{project_id}/versions", headers=_pm_headers())
                 resp.raise_for_status()
                 return resp.json()
             except Exception as e:
@@ -321,7 +330,7 @@ def register_project_tools(mcp) -> None:  # noqa: C901
             if not project_id:
                 return {"error": "project_id required for get_sprints"}
             try:
-                resp = await api_get(f"{_PM}/{project_id}/sprints")
+                resp = await api_get(f"{_PM}/{project_id}/sprints", headers=_pm_headers())
                 resp.raise_for_status()
                 return resp.json()
             except Exception as e:
@@ -424,7 +433,7 @@ def register_project_tools(mcp) -> None:  # noqa: C901
             if filter:
                 params["filter"] = filter
             try:
-                resp = await api_get(f"{base}/tasks", params=params)
+                resp = await api_get(f"{base}/tasks", params=params, headers=_pm_headers())
                 resp.raise_for_status()
                 return resp.json()
             except Exception as e:
@@ -436,7 +445,7 @@ def register_project_tools(mcp) -> None:  # noqa: C901
                 return {"error": "query required for filter. Example: \"priority_id:3 AND status_id:1\""}
             params = {"query": f'"{query}"', "page": page, "per_page": per_page}
             try:
-                resp = await api_get(f"{base}/tasks/filter", params=params)
+                resp = await api_get(f"{base}/tasks/filter", params=params, headers=_pm_headers())
                 resp.raise_for_status()
                 return resp.json()
             except Exception as e:
@@ -447,7 +456,7 @@ def register_project_tools(mcp) -> None:  # noqa: C901
             if not task_id:
                 return {"error": "task_id required for get"}
             try:
-                resp = await api_get(f"{base}/tasks/{task_id}")
+                resp = await api_get(f"{base}/tasks/{task_id}", headers=_pm_headers())
                 resp.raise_for_status()
                 return resp.json()
             except Exception as e:
@@ -515,7 +524,7 @@ def register_project_tools(mcp) -> None:  # noqa: C901
             if not task_id:
                 return {"error": "task_id required for delete"}
             try:
-                resp = await api_delete(f"{base}/tasks/{task_id}")
+                resp = await api_delete(f"{base}/tasks/{task_id}", headers=_pm_headers())
                 if resp.status_code == 204:
                     return {"success": True, "message": "Project task deleted"}
                 resp.raise_for_status()
@@ -526,7 +535,7 @@ def register_project_tools(mcp) -> None:  # noqa: C901
         # ---------- get_task_types ----------
         if action == "get_task_types":
             try:
-                resp = await api_get(f"{base}/task-types")
+                resp = await api_get(f"{base}/task-types", headers=_pm_headers())
                 resp.raise_for_status()
                 return resp.json()
             except Exception as e:
@@ -540,7 +549,7 @@ def register_project_tools(mcp) -> None:  # noqa: C901
                     "Use action='get_task_types' first."
                 }
             try:
-                resp = await api_get(f"{base}/task-types/{type_id}/fields")
+                resp = await api_get(f"{base}/task-types/{type_id}/fields", headers=_pm_headers())
                 resp.raise_for_status()
                 return resp.json()
             except Exception as e:
@@ -549,7 +558,7 @@ def register_project_tools(mcp) -> None:  # noqa: C901
         # ---------- get_task_statuses ----------
         if action == "get_task_statuses":
             try:
-                resp = await api_get(f"{base}/task-statuses")
+                resp = await api_get(f"{base}/task-statuses", headers=_pm_headers())
                 resp.raise_for_status()
                 return resp.json()
             except Exception as e:
@@ -558,7 +567,7 @@ def register_project_tools(mcp) -> None:  # noqa: C901
         # ---------- get_task_priorities ----------
         if action == "get_task_priorities":
             try:
-                resp = await api_get(f"{base}/task-priorities")
+                resp = await api_get(f"{base}/task-priorities", headers=_pm_headers())
                 resp.raise_for_status()
                 return resp.json()
             except Exception as e:
@@ -585,7 +594,7 @@ def register_project_tools(mcp) -> None:  # noqa: C901
             if not task_id:
                 return {"error": "task_id required for list_notes"}
             try:
-                resp = await api_get(f"{base}/tasks/{task_id}/notes")
+                resp = await api_get(f"{base}/tasks/{task_id}/notes", headers=_pm_headers())
                 resp.raise_for_status()
                 return resp.json()
             except Exception as e:
@@ -612,7 +621,7 @@ def register_project_tools(mcp) -> None:  # noqa: C901
             if not task_id or not note_id:
                 return {"error": "task_id and note_id required for delete_note"}
             try:
-                resp = await api_delete(f"{base}/tasks/{task_id}/notes/{note_id}")
+                resp = await api_delete(f"{base}/tasks/{task_id}/notes/{note_id}", headers=_pm_headers())
                 if resp.status_code == 204:
                     return {"success": True, "message": "Task note deleted"}
                 resp.raise_for_status()
@@ -649,7 +658,7 @@ def register_project_tools(mcp) -> None:  # noqa: C901
                     "error": "module_name required — one of: tickets, problems, changes, assets"
                 }
             try:
-                resp = await api_get(f"{base}/tasks/{task_id}/{module_name}")
+                resp = await api_get(f"{base}/tasks/{task_id}/{module_name}", headers=_pm_headers())
                 resp.raise_for_status()
                 return resp.json()
             except Exception as e:
@@ -667,7 +676,8 @@ def register_project_tools(mcp) -> None:  # noqa: C901
                 return {"error": "association_id required — the entity ID to dissociate"}
             try:
                 resp = await api_delete(
-                    f"{base}/tasks/{task_id}/{module_name}/{association_id}"
+                    f"{base}/tasks/{task_id}/{module_name}/{association_id}",
+                    headers=_pm_headers(),
                 )
                 if resp.status_code == 204:
                     return {"success": True, "message": f"Task {module_name} association deleted"}

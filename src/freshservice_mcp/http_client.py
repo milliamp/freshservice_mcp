@@ -49,10 +49,20 @@ def api_url(path: str) -> str:
     return f"https://{FRESHSERVICE_DOMAIN}/api/v2/{path.lstrip('/')}"
 
 
-async def api_get(path: str, params: Optional[Dict[str, Any]] = None) -> httpx.Response:
-    """Perform an authenticated GET request."""
+async def api_get(path: str, params: Optional[Dict[str, Any]] = None,
+                  headers: Optional[Dict[str, str]] = None) -> httpx.Response:
+    """Perform an authenticated GET request.
+
+    *headers* overrides the default auth-only headers.  Pass
+    ``get_auth_headers()`` for endpoints that require Content-Type
+    (e.g. ``/api/v2/pm/`` NewGen endpoints).
+    """
     async with httpx.AsyncClient() as client:
-        return await client.get(api_url(path), headers=get_auth_headers_readonly(), params=params)
+        return await client.get(
+            api_url(path),
+            headers=headers or get_auth_headers_readonly(),
+            params=params,
+        )
 
 
 async def api_post(path: str, json: Optional[Dict[str, Any]] = None) -> httpx.Response:
@@ -67,10 +77,14 @@ async def api_put(path: str, json: Optional[Dict[str, Any]] = None) -> httpx.Res
         return await client.put(api_url(path), headers=get_auth_headers(), json=json)
 
 
-async def api_delete(path: str) -> httpx.Response:
+async def api_delete(path: str,
+                     headers: Optional[Dict[str, str]] = None) -> httpx.Response:
     """Perform an authenticated DELETE request."""
     async with httpx.AsyncClient() as client:
-        return await client.delete(api_url(path), headers=get_auth_headers_readonly())
+        return await client.delete(
+            api_url(path),
+            headers=headers or get_auth_headers_readonly(),
+        )
 
 
 def handle_error(e: Exception, action: str = "request") -> Dict[str, Any]:
