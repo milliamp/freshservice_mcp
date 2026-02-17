@@ -10,7 +10,7 @@ A powerful MCP (Model Context Protocol) server implementation that seamlessly in
 
 - **Enterprise-Grade Freshservice Integration**: Direct, secure communication with Freshservice API endpoints
 - **AI Model Compatibility**: Enables Claude and other AI models to execute service desk operations through Freshservice
-- **Modular Architecture**: 34 tools organized into 13 independently loadable scopes — load only what you need
+- **Modular Architecture**: 35 tools organized into 13 independently loadable scopes — load only what you need
 - **Scope-Based Loading**: Use `FRESHSERVICE_SCOPES` env var or `--scope` CLI arg to control which tool modules are active
 - **Dynamic Form Discovery**: Auto-discover custom fields for tickets, changes, problems, releases, assets
 - **Workflow Acceleration**: Reduce manual intervention in routine IT service tasks
@@ -40,7 +40,7 @@ Additionally, 2 **discovery tools** are always loaded:
 - `discover_form_fields` — Discover custom field definitions for any entity type
 - `clear_field_cache` — Clear cached field definitions
 
-**Total: 34 tools** (32 scoped + 2 discovery)
+**Total: 35 tools** (33 scoped + 2 discovery)
 
 ## Tools Reference
 
@@ -357,7 +357,7 @@ Add to `.vscode/mcp.json` in your workspace:
 
 ### Scope Selection
 
-By default all 12 scopes are loaded (30 tools). To load only specific scopes:
+By default all 13 scopes are loaded (33 scoped tools + 2 discovery = 35 tools). To load only specific scopes:
 
 **Via environment variable:**
 
@@ -403,6 +403,13 @@ Once configured, you can ask your AI assistant to:
 
 - "Create a maintenance window on the status page linked to change #5100"
 - "List all service components on our public status page"
+
+**Projects:**
+
+- "List all active projects"
+- "Show all tasks in project #2000251059 that are In Progress"
+- "Create a new task in project #2000194127 titled 'Deploy monitoring agent'"
+- "Find all my non-closed tasks across all projects"
 
 **Assets / CMDB:**
 
