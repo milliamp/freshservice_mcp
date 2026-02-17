@@ -10,7 +10,7 @@ A powerful MCP (Model Context Protocol) server implementation that seamlessly in
 
 - **Enterprise-Grade Freshservice Integration**: Direct, secure communication with Freshservice API endpoints
 - **AI Model Compatibility**: Enables Claude and other AI models to execute service desk operations through Freshservice
-- **Modular Architecture**: 30 tools organized into 12 independently loadable scopes — load only what you need
+- **Modular Architecture**: 34 tools organized into 13 independently loadable scopes — load only what you need
 - **Scope-Based Loading**: Use `FRESHSERVICE_SCOPES` env var or `--scope` CLI arg to control which tool modules are active
 - **Dynamic Form Discovery**: Auto-discover custom fields for tickets, changes, problems, releases, assets
 - **Workflow Acceleration**: Reduce manual intervention in routine IT service tasks
@@ -31,6 +31,7 @@ The server uses a modular scope-based architecture. Each scope registers one or 
 | `agents` | `manage_agent`, `manage_agent_group` | Agent & agent group management |
 | `requesters` | `manage_requester`, `manage_requester_group` | Requester & requester group management |
 | `solutions` | `manage_solution` | Solution categories, folders, articles |
+| `projects` | `manage_project`, `manage_project_task` | Project management (NewGen) — tasks, members, associations, sprints |
 | `products` | `manage_product` | Product catalog management |
 | `misc` | `manage_canned_response`, `manage_workspace` | Canned responses, workspaces |
 
@@ -39,7 +40,7 @@ Additionally, 2 **discovery tools** are always loaded:
 - `discover_form_fields` — Discover custom field definitions for any entity type
 - `clear_field_cache` — Clear cached field definitions
 
-**Total: 32 tools** (30 scoped + 2 discovery)
+**Total: 34 tools** (32 scoped + 2 discovery)
 
 ## Tools Reference
 
@@ -188,6 +189,52 @@ All actions auto-discover `status_page_id` if omitted. Maintenance CRUD requires
 | `delete_subscriber` | `subscriber_id` |
 
 Key fields: `started_at` (ISO datetime), `ended_at`, `impacted_services` (`[{id, status}]`), `notifications` (`[{trigger, options}]`), `description`.
+
+### Project Management (`projects` scope)
+
+**`manage_project`** — Actions: `create`, `update`, `get`, `list`, `delete`, `archive`, `restore`, `get_fields`, `get_templates`, `add_members`, `get_memberships`, `create_association`, `get_associations`, `delete_association`, `get_versions`, `get_sprints`
+
+| Action | Required Parameters | Optional Parameters |
+| ------ | ------------------- | ------------------- |
+| `list` | — | `filter` (`completed`, `incomplete`, `archived`, `open`, `in_progress`), `page`, `per_page` |
+| `get` | `project_id` | — |
+| `create` | `name`, `project_type` (0=Software, 1=Business) | `description`, `key`, `priority_id`, `manager_id`, `start_date`, `end_date`, `visibility`, `sprint_duration`, `project_template_id`, `custom_fields` |
+| `update` | `project_id` | any updatable field |
+| `delete` | `project_id` | — |
+| `archive` / `restore` | `project_id` | — |
+| `get_fields` | — | — |
+| `get_templates` | — | — |
+| `add_members` | `project_id`, `members` (`[{"email": "...", "role": 1}]`) | — |
+| `get_memberships` | `project_id` | — |
+| `create_association` | `project_id`, `module_name` (`tickets`/`problems`/`changes`/`assets`), `ids` | — |
+| `get_associations` | `project_id`, `module_name` | — |
+| `delete_association` | `project_id`, `module_name`, `association_id` | — |
+| `get_versions` / `get_sprints` | `project_id` | — |
+
+Priority: 1=Low, 2=Medium, 3=High, 4=Urgent · Status: 1=Yet to start, 2=In Progress, 3=Completed · Visibility: 0=Private, 1=Public
+
+**`manage_project_task`** — Actions: `create`, `update`, `get`, `list`, `filter`, `delete`, `get_task_types`, `get_task_type_fields`, `get_task_statuses`, `get_task_priorities`, `create_note`, `list_notes`, `update_note`, `delete_note`, `create_association`, `get_associations`, `delete_association`
+
+| Action | Required Parameters | Optional Parameters |
+| ------ | ------------------- | ------------------- |
+| `list` | `project_id` | `filter`, `page`, `per_page` |
+| `get` | `project_id`, `task_id` | — |
+| `create` | `project_id`, `title`, `type_id` | `description`, `status_id`, `priority_id`, `assignee_id`, `reporter_id`, `parent_id`, `planned_start_date`, `planned_end_date`, `planned_effort`, `story_points`, `sprint_id`, `version_id`, `custom_fields` |
+| `update` | `project_id`, `task_id` | any updatable field |
+| `delete` | `project_id`, `task_id` | — |
+| `filter` | `project_id`, `query` | `page`, `per_page` |
+| `get_task_types` | `project_id` | — |
+| `get_task_type_fields` | `project_id`, `type_id` | — |
+| `get_task_statuses` / `get_task_priorities` | `project_id` | — |
+| `create_note` | `project_id`, `task_id`, `content` | — |
+| `list_notes` | `project_id`, `task_id` | — |
+| `update_note` | `project_id`, `task_id`, `note_id`, `content` | — |
+| `delete_note` | `project_id`, `task_id`, `note_id` | — |
+| `create_association` | `project_id`, `task_id`, `module_name`, `ids` | — |
+| `get_associations` | `project_id`, `task_id`, `module_name` | — |
+| `delete_association` | `project_id`, `task_id`, `module_name`, `association_id` | — |
+
+> Use `get_task_types` to discover available type_ids before creating tasks. The task UPDATE endpoint uses a singular path (`/task/` instead of `/tasks/`) — this is handled automatically.
 
 ### Departments & Locations (`departments` scope)
 

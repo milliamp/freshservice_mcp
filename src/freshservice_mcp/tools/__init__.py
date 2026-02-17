@@ -10,6 +10,7 @@ from .departments import register_department_tools
 from .misc import register_misc_tools
 from .problems import register_problem_tools
 from .products import register_products_tools
+from .projects import register_project_tools
 from .releases import register_release_tools
 from .requesters import register_requesters_tools
 from .solutions import register_solutions_tools
@@ -29,6 +30,7 @@ SCOPE_REGISTRY: dict[str, callable] = {
     "problems": register_problem_tools,
     "releases": register_release_tools,
     "departments": register_department_tools,
+    "projects": register_project_tools,
     "status_page": register_status_page_tools,
     "misc": register_misc_tools,
 }
@@ -42,6 +44,7 @@ __all__ = [
     "register_misc_tools",
     "register_problem_tools",
     "register_products_tools",
+    "register_project_tools",
     "register_release_tools",
     "register_requesters_tools",
     "register_solutions_tools",
