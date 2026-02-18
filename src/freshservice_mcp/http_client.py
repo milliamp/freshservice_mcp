@@ -65,7 +65,7 @@ async def api_get(path: str, params: Optional[Dict[str, Any]] = None,
         )
 
 
-async def api_post(path: str, json: Optional[Dict[str, Any]] = None) -> httpx.Response:
+async def api_post(path: str, json: Optional[Any] = None) -> httpx.Response:
     """Perform an authenticated POST request."""
     async with httpx.AsyncClient() as client:
         return await client.post(api_url(path), headers=get_auth_headers(), json=json)

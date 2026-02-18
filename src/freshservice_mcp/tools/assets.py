@@ -5,6 +5,7 @@ Exposes 3 tools instead of the original 22:
   • manage_asset_details   — components, assignment history, requests, contracts
   • manage_asset_relationship — CRUD + list + types + job status
 """
+import json
 import urllib.parse
 from typing import Any, Dict, List, Optional
 
@@ -398,8 +399,17 @@ def register_assets_tools(mcp) -> None:
         if action == "create":
             if not relationships:
                 return {"error": "relationships list required for create"}
+            # Guard: MCP tool params may arrive as a JSON string
+            if isinstance(relationships, str):
+                try:
+                    relationships = json.loads(relationships)
+                except json.JSONDecodeError:
+                    return {"error": "relationships must be a JSON array of dicts"}
+            if not isinstance(relationships, list):
+                return {"error": "relationships must be a list of dicts"}
             try:
-                resp = await api_post("relationships/bulk-create", json=relationships)
+                payload = {"relationships": relationships}
+                resp = await api_post("relationships/bulk-create", json=payload)
                 resp.raise_for_status()
                 return resp.json()
             except Exception as e:
@@ -408,6 +418,12 @@ def register_assets_tools(mcp) -> None:
         if action == "delete":
             if not relationship_ids:
                 return {"error": "relationship_ids list required for delete"}
+            # Guard: MCP tool params may arrive as a JSON string
+            if isinstance(relationship_ids, str):
+                try:
+                    relationship_ids = json.loads(relationship_ids)
+                except json.JSONDecodeError:
+                    return {"error": "relationship_ids must be a JSON array of ints"}
             ids_str = ",".join(str(i) for i in relationship_ids)
             try:
                 resp = await api_delete(f"relationships?ids={ids_str}")
