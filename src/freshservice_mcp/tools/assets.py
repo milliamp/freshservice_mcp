@@ -6,7 +6,6 @@ Exposes 3 tools instead of the original 22:
   • manage_asset_relationship — CRUD + list + types + job status
 """
 import json
-import urllib.parse
 from typing import Any, Dict, List, Optional
 
 from ..http_client import (
@@ -136,12 +135,14 @@ def register_assets_tools(mcp) -> None:
         if action == "search":
             if not search_query:
                 return {"error": "search_query required for search"}
-            encoded = urllib.parse.quote(f'"{search_query}"')
-            params = {"page": page}
+            params: Dict[str, Any] = {
+                "query": f'"{search_query}"',
+                "page": page,
+            }
             if trashed:
                 params["trashed"] = "true"
             try:
-                resp = await api_get(f"assets?search={encoded}", params=params)
+                resp = await api_get("assets", params=params)
                 resp.raise_for_status()
                 return resp.json()
             except Exception as e:
@@ -151,12 +152,18 @@ def register_assets_tools(mcp) -> None:
         if action == "filter":
             if not filter_query:
                 return {"error": "filter_query required for filter"}
-            encoded = urllib.parse.quote(f'"{filter_query}"')
-            params: Dict[str, Any] = {"page": page}
+            # Freshservice filter expects the value wrapped in double-quotes,
+            # e.g. filter="asset_type_id:50000039936"
+            # Strip any existing outer quotes the caller may have added.
+            fq = filter_query.strip('"')
+            params: Dict[str, Any] = {
+                "filter": f'"{fq}"',
+                "page": page,
+            }
             if include:
                 params["include"] = include
             try:
-                resp = await api_get(f"assets?filter={encoded}", params=params)
+                resp = await api_get("assets", params=params)
                 resp.raise_for_status()
                 return resp.json()
             except Exception as e:

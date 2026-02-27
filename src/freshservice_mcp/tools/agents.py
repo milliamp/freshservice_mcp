@@ -91,13 +91,15 @@ def register_agents_tools(mcp) -> None:
         if action == "filter":
             if not query:
                 return {"error": "query required for filter"}
-            import urllib.parse
-            encoded = urllib.parse.quote(f'"{query}"')
             all_agents: List[Any] = []
             current_page = 1
             while True:
                 try:
-                    resp = await api_get(f"agents?query={encoded}", params={"page": current_page})
+                    params: Dict[str, Any] = {
+                        "query": f'"{query}"',
+                        "page": current_page,
+                    }
+                    resp = await api_get("agents", params=params)
                     resp.raise_for_status()
                     data = resp.json()
                     agents = data.get("agents", [])
