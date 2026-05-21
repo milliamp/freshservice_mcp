@@ -93,6 +93,50 @@ class UnassignedForOptions(str, Enum):
     TWO_DAYS = "2d"
     THREE_DAYS = "3d"
 
+class ProblemStatus(IntEnum):
+    OPEN = 1
+    CHANGE_REQUESTED = 2
+    CLOSED = 3
+
+class ProblemImpact(IntEnum):
+    LOW = 1
+    MEDIUM = 2
+    HIGH = 3
+
+class ReleaseStatus(IntEnum):
+    OPEN = 1
+    ON_HOLD = 2
+    IN_PROGRESS = 3
+    INCOMPLETE = 4
+    COMPLETED = 5
+
+class ReleaseType(IntEnum):
+    MINOR = 1
+    STANDARD = 2
+    MAJOR = 3
+    EMERGENCY = 4
+
+class TaskStatus(IntEnum):
+    OPEN = 1
+    IN_PROGRESS = 2
+    COMPLETED = 3
+
+class ProjectType(IntEnum):
+    SOFTWARE = 0
+    BUSINESS = 1
+
+class ContractTypeId(IntEnum):
+    LEASE = 1
+    MAINTENANCE = 2
+    SOFTWARE_LICENSE = 3
+    WARRANTY = 4
+
+class ApprovalType(IntEnum):
+    EVERYONE = 1
+    ANYONE = 2
+    MAJORITY = 3
+    FIRST_RESPONDER = 4
+
 # All available scopes for --scope flag
 AVAILABLE_SCOPES = [
     "tickets",
@@ -107,4 +151,12 @@ AVAILABLE_SCOPES = [
     "canned_responses",
     "workspaces",
     "discovery",
+    "problems",
+    "releases",
+    "locations",
+    "departments",
+    "contracts",
+    "projects",
+    "announcements",
+    "custom_objects",
 ]

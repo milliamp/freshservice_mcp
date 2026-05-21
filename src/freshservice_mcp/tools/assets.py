@@ -1,7 +1,7 @@
 """Freshservice MCP — Assets tools (consolidated).
 
 Exposes 3 tools instead of the original 22:
-  • manage_asset           — CRUD + list + search + filter + delete + restore + move + get_types
+  • manage_asset           — CRUD + list + search + filter + delete + restore + move + get_types + create_type + get_type_fields
   • manage_asset_details   — components, assignment history, requests, contracts
   • manage_asset_relationship — CRUD + list + types + job status
 """
@@ -54,20 +54,23 @@ def register_assets_tools(mcp) -> None:
         trashed: bool = False,
         page: int = 1,
         per_page: int = 30,
+        # create_type fields
+        parent_asset_type_id: Optional[int] = None,
+        visible: Optional[bool] = True,
     ) -> Dict[str, Any]:
         """Unified asset operations.
 
         Args:
             action: One of 'create', 'update', 'delete', 'delete_permanently',
                     'restore', 'get', 'list', 'search', 'filter', 'move',
-                    'get_types', 'get_type'
+                    'get_types', 'get_type', 'create_type', 'get_type_fields'
             display_id: Asset display ID (get, update, delete, restore, move, details)
-            asset_type_id: Asset type ID (create — MANDATORY, get_type)
-            name: Asset name (create — MANDATORY)
+            asset_type_id: Asset type ID (create — MANDATORY, get_type, get_type_fields)
+            name: Asset name (create — MANDATORY) or asset type name (create_type — MANDATORY)
             asset_tag: Asset tag (e.g. 'ASSET-9')
             impact: 'low', 'medium', or 'high' (default: 'low')
             usage_type: 'permanent' or 'loaner' (default: 'permanent')
-            description: Asset description
+            description: Asset or asset type description
             user_id: User ID (Used By)
             location_id: Location ID
             department_id: Department ID
@@ -85,6 +88,8 @@ def register_assets_tools(mcp) -> None:
             trashed: Include trashed assets (list, search)
             page: Page number
             per_page: Items per page
+            parent_asset_type_id: Parent asset type ID (create_type)
+            visible: Whether the asset type is visible (create_type, default True)
         """
         action = action.lower().strip()
 
@@ -304,7 +309,34 @@ def register_assets_tools(mcp) -> None:
             except Exception as e:
                 return handle_error(e, "get asset type")
 
-        return {"error": f"Unknown action '{action}'. Valid: create, update, delete, delete_permanently, restore, get, list, search, filter, move, get_types, get_type"}
+        # ---------- create_type ----------
+        if action == "create_type":
+            if not name:
+                return {"error": "name is required for create_type"}
+            data: Dict[str, Any] = {"name": name, "visible": visible}
+            if description:
+                data["description"] = description
+            if parent_asset_type_id:
+                data["parent_asset_type_id"] = parent_asset_type_id
+            try:
+                resp = await api_post("asset_types", json=data)
+                resp.raise_for_status()
+                return {"success": True, "asset_type": resp.json()}
+            except Exception as e:
+                return handle_error(e, "create asset type")
+
+        # ---------- get_type_fields ----------
+        if action == "get_type_fields":
+            if not asset_type_id:
+                return {"error": "asset_type_id required for get_type_fields"}
+            try:
+                resp = await api_get(f"asset_types/{asset_type_id}/fields")
+                resp.raise_for_status()
+                return resp.json()
+            except Exception as e:
+                return handle_error(e, "get asset type fields")
+
+        return {"error": f"Unknown action '{action}'. Valid: create, update, delete, delete_permanently, restore, get, list, search, filter, move, get_types, get_type, create_type, get_type_fields"}
 
     # ------------------------------------------------------------------ #
     #  manage_asset_details                                               #

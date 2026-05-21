@@ -81,6 +81,9 @@ _FIELD_ENDPOINTS: Dict[str, str] = {
     "change": "change_form_fields",
     "agent": "agent_fields",
     "requester": "requester_fields",
+    "problem": "problem_form_fields",
+    "release": "release_form_fields",
+    "department": "department_fields",
 }
 
 

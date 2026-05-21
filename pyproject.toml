@@ -23,5 +23,8 @@ email = "maanaesh.s@effy.co.in"
 name = "Vijay Ragunath"
 email = "vijay.r@effy.co.in"
 
+[[project.authors]]
+name = "Alex Taylor"
+
 [project.scripts]
 freshservice-mcp = "freshservice_mcp.server:main"

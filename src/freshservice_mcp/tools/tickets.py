@@ -1,9 +1,12 @@
 """Freshservice MCP — Tickets tools (consolidated).
 
-Exposes 3 tools instead of the original 11:
-  • manage_ticket          — CRUD + list + filter + get_fields
-  • manage_ticket_conversation — reply, add_note, update, list
-  • manage_service_catalog — list_items, get_requested_items, place_request
+Exposes 6 tools:
+  • manage_ticket               — CRUD + list + filter + get_fields
+  • manage_ticket_conversation  — reply, add_note, update, list
+  • manage_service_catalog      — list_items, get_requested_items, place_request
+  • manage_ticket_task          — create, view, list, update, delete
+  • manage_ticket_time_entry    — create, view, list, update, delete
+  • manage_ticket_approval      — create, list, view, approve, reject, remind
 """
 import json
 import urllib.parse
@@ -83,6 +86,42 @@ def register_tickets_tools(mcp) -> None:
             page: Page number (list/filter)
             per_page: Items per page 1-100 (list)
             workspace_id: Workspace filter (filter)
+
+        Action-specific notes:
+
+        **get_fields**: Retrieves all ticket form fields including metadata, types,
+        and possible values. Essential for discovering valid status/priority values
+        since these are *user-configurable* per Freshservice instance. Always call
+        get_fields before constructing filter queries to ensure correct values.
+        Returns field definitions with names, types, labels, choice options for
+        dropdowns (status, priority, source), and custom field configurations.
+
+        **filter**: Filters tickets using structured queries. The query is
+        automatically URL-encoded and wrapped in double quotes.
+
+        Supported filter fields:
+            agent_id, requester_id, status, priority, group_id, department_id,
+            source, type, category, sub_category, item_category, created_at,
+            updated_at, due_by, fr_due_by, workspace_id, and custom fields.
+
+        Query syntax:
+            - Logical operators: AND, OR
+            - Format: "field:value AND field:value"
+            - Relational: :> (>=), :< (<=) for dates/numbers
+            - Dates: ISO 8601 (YYYY-MM-DD or YYYY-MM-DDTHH:MM:SSZ)
+            - Null check: field:null
+
+        Examples:
+            "agent_id:120002355359 AND status:2"
+            "priority:4 AND status:2"
+            "created_at:>'2025-01-01'"
+            "(status:2 OR status:3) AND priority:4"
+            "agent_id:null AND status:2"
+
+        Common errors:
+            - Use 'agent_id' for filtering (NOT 'responder_id')
+            - Status/priority values are instance-specific — call get_fields first
+            - "invalid char in json text" → check query syntax and field names
         """
         action = action.lower().strip()
 
@@ -370,3 +409,292 @@ def register_tickets_tools(mcp) -> None:
                 return handle_error(e, "place service request")
 
         return {"error": f"Unknown action '{action}'. Valid: list_items, get_requested_items, place_request"}
+
+    # ------------------------------------------------------------------ #
+    #  manage_ticket_task                                                 #
+    # ------------------------------------------------------------------ #
+    @mcp.tool()
+    async def manage_ticket_task(
+        action: str,
+        ticket_id: int,
+        task_id: Optional[int] = None,
+        title: Optional[str] = None,
+        description: Optional[str] = None,
+        status: Optional[int] = None,
+        due_date: Optional[str] = None,
+        notify_before: Optional[int] = None,
+        group_id: Optional[int] = None,
+        agent_id: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """Manage tasks on a ticket.
+
+        Args:
+            action: 'create', 'view', 'list', 'update', 'delete'
+            ticket_id: The ticket ID (REQUIRED)
+            task_id: Required for view, update, delete
+            title: Task title (create)
+            description: Task description (create/update)
+            status: 1=Open, 2=In Progress, 3=Completed (create/update)
+            due_date: ISO datetime (create/update)
+            notify_before: Seconds to notify before due date (create/update)
+            group_id: Group ID (create/update)
+            agent_id: Agent ID (create/update)
+        """
+        action = action.lower().strip()
+        base = f"tickets/{ticket_id}/tasks"
+
+        if action == "list":
+            try:
+                resp = await api_get(base)
+                resp.raise_for_status()
+                return resp.json()
+            except Exception as e:
+                return handle_error(e, "list ticket tasks")
+
+        if action == "create":
+            if not title:
+                return {"error": "title required for create"}
+            data: Dict[str, Any] = {"title": title}
+            for k, v in [("description", description), ("status", status),
+                         ("due_date", due_date), ("notify_before", notify_before),
+                         ("group_id", group_id), ("agent_id", agent_id)]:
+                if v is not None:
+                    data[k] = v
+            try:
+                resp = await api_post(base, json=data)
+                resp.raise_for_status()
+                return resp.json()
+            except Exception as e:
+                return handle_error(e, "create ticket task")
+
+        if action == "view":
+            if not task_id:
+                return {"error": "task_id required for view"}
+            try:
+                resp = await api_get(f"{base}/{task_id}")
+                resp.raise_for_status()
+                return resp.json()
+            except Exception as e:
+                return handle_error(e, "view ticket task")
+
+        if action == "update":
+            if not task_id:
+                return {"error": "task_id required for update"}
+            data = {}
+            for k, v in [("title", title), ("description", description),
+                         ("status", status), ("due_date", due_date),
+                         ("notify_before", notify_before), ("group_id", group_id),
+                         ("agent_id", agent_id)]:
+                if v is not None:
+                    data[k] = v
+            try:
+                resp = await api_put(f"{base}/{task_id}", json=data)
+                resp.raise_for_status()
+                return resp.json()
+            except Exception as e:
+                return handle_error(e, "update ticket task")
+
+        if action == "delete":
+            if not task_id:
+                return {"error": "task_id required for delete"}
+            try:
+                resp = await api_delete(f"{base}/{task_id}")
+                if resp.status_code == 204:
+                    return {"success": True, "message": "Task deleted"}
+                resp.raise_for_status()
+                return resp.json()
+            except Exception as e:
+                return handle_error(e, "delete ticket task")
+
+        return {"error": f"Unknown action '{action}'. Valid: create, view, list, update, delete"}
+
+    # ------------------------------------------------------------------ #
+    #  manage_ticket_time_entry                                           #
+    # ------------------------------------------------------------------ #
+    @mcp.tool()
+    async def manage_ticket_time_entry(
+        action: str,
+        ticket_id: int,
+        time_entry_id: Optional[int] = None,
+        te_agent_id: Optional[int] = None,
+        time_spent: Optional[str] = None,
+        note: Optional[str] = None,
+        executed_at: Optional[str] = None,
+        billable: Optional[bool] = None,
+        timer_running: Optional[bool] = None,
+        task_id: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """Manage time entries on a ticket.
+
+        Args:
+            action: 'create', 'view', 'list', 'update', 'delete'
+            ticket_id: The ticket ID (REQUIRED)
+            time_entry_id: Required for view, update, delete
+            te_agent_id: Agent ID who did the work (create - REQUIRED)
+            time_spent: Format "hh:mm" (create - REQUIRED)
+            note: Work description (create/update)
+            executed_at: ISO datetime when work was done (create/update)
+            billable: Whether this time is billable (create/update)
+            timer_running: Whether a timer is running (create/update)
+            task_id: Associated task ID (create)
+        """
+        action = action.lower().strip()
+        base = f"tickets/{ticket_id}/time_entries"
+
+        if action == "list":
+            try:
+                resp = await api_get(base)
+                resp.raise_for_status()
+                return resp.json()
+            except Exception as e:
+                return handle_error(e, "list time entries")
+
+        if action == "create":
+            if not te_agent_id or not time_spent:
+                return {"error": "te_agent_id and time_spent are required for create"}
+            data: Dict[str, Any] = {"agent_id": te_agent_id, "time_spent": time_spent}
+            for k, v in [("note", note), ("executed_at", executed_at), ("task_id", task_id)]:
+                if v is not None:
+                    data[k] = v
+            if billable is not None:
+                data["billable"] = billable
+            if timer_running is not None:
+                data["timer_running"] = timer_running
+            try:
+                resp = await api_post(base, json=data)
+                resp.raise_for_status()
+                return resp.json()
+            except Exception as e:
+                return handle_error(e, "create time entry")
+
+        if action == "view":
+            if not time_entry_id:
+                return {"error": "time_entry_id required for view"}
+            try:
+                resp = await api_get(f"{base}/{time_entry_id}")
+                resp.raise_for_status()
+                return resp.json()
+            except Exception as e:
+                return handle_error(e, "view time entry")
+
+        if action == "update":
+            if not time_entry_id:
+                return {"error": "time_entry_id required for update"}
+            data = {}
+            for k, v in [("time_spent", time_spent), ("note", note), ("executed_at", executed_at)]:
+                if v is not None:
+                    data[k] = v
+            if billable is not None:
+                data["billable"] = billable
+            if timer_running is not None:
+                data["timer_running"] = timer_running
+            try:
+                resp = await api_put(f"{base}/{time_entry_id}", json=data)
+                resp.raise_for_status()
+                return resp.json()
+            except Exception as e:
+                return handle_error(e, "update time entry")
+
+        if action == "delete":
+            if not time_entry_id:
+                return {"error": "time_entry_id required for delete"}
+            try:
+                resp = await api_delete(f"{base}/{time_entry_id}")
+                if resp.status_code == 204:
+                    return {"success": True, "message": "Time entry deleted"}
+                resp.raise_for_status()
+                return resp.json()
+            except Exception as e:
+                return handle_error(e, "delete time entry")
+
+        return {"error": f"Unknown action '{action}'. Valid: create, view, list, update, delete"}
+
+    # ------------------------------------------------------------------ #
+    #  manage_ticket_approval                                             #
+    # ------------------------------------------------------------------ #
+    @mcp.tool()
+    async def manage_ticket_approval(
+        action: str,
+        ticket_id: int,
+        approval_id: Optional[int] = None,
+        approver_id: Optional[int] = None,
+        approval_type: Optional[int] = None,
+        email_content: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Manage approvals on a ticket.
+
+        Args:
+            action: 'create', 'list', 'view', 'approve', 'reject', 'remind'
+            ticket_id: The ticket ID (REQUIRED)
+            approval_id: Required for view, approve, reject, remind
+            approver_id: Approver user ID (create - REQUIRED)
+            approval_type: 1=Everyone, 2=Anyone, 3=Majority, 4=First Responder (create)
+            email_content: Custom email content for approval request (create)
+        """
+        action = action.lower().strip()
+        base = f"tickets/{ticket_id}/approvals"
+
+        if action == "list":
+            try:
+                resp = await api_get(base)
+                resp.raise_for_status()
+                return resp.json()
+            except Exception as e:
+                return handle_error(e, "list ticket approvals")
+
+        if action == "create":
+            if not approver_id:
+                return {"error": "approver_id required for create"}
+            data: Dict[str, Any] = {"approver_id": approver_id}
+            if approval_type is not None:
+                data["approval_type"] = approval_type
+            if email_content:
+                data["email_content"] = email_content
+            try:
+                resp = await api_post(base, json=data)
+                resp.raise_for_status()
+                return resp.json()
+            except Exception as e:
+                return handle_error(e, "create ticket approval")
+
+        if action == "view":
+            if not approval_id:
+                return {"error": "approval_id required for view"}
+            try:
+                resp = await api_get(f"{base}/{approval_id}")
+                resp.raise_for_status()
+                return resp.json()
+            except Exception as e:
+                return handle_error(e, "view ticket approval")
+
+        if action == "approve":
+            if not approval_id:
+                return {"error": "approval_id required for approve"}
+            try:
+                resp = await api_put(f"{base}/{approval_id}/approve")
+                resp.raise_for_status()
+                return {"success": True, "message": "Approval approved"}
+            except Exception as e:
+                return handle_error(e, "approve ticket approval")
+
+        if action == "reject":
+            if not approval_id:
+                return {"error": "approval_id required for reject"}
+            try:
+                resp = await api_put(f"{base}/{approval_id}/reject")
+                resp.raise_for_status()
+                return {"success": True, "message": "Approval rejected"}
+            except Exception as e:
+                return handle_error(e, "reject ticket approval")
+
+        if action == "remind":
+            if not approval_id:
+                return {"error": "approval_id required for remind"}
+            try:
+                resp = await api_put(f"{base}/{approval_id}/remind")
+                resp.raise_for_status()
+                return {"success": True, "message": "Reminder sent"}
+            except Exception as e:
+                return handle_error(e, "send approval reminder")
+
+        return {"error": f"Unknown action '{action}'. Valid: create, list, view, approve, reject, remind"}
