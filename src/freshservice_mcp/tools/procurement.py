@@ -1,8 +1,11 @@
 """Freshservice MCP — Procurement tools (consolidated).
 
-Exposes 2 tools:
-  • manage_purchase_order — CRUD + list
-  • manage_vendor         — CRUD + list + delete
+Each tool is exposed as a read_/manage_ pair so MCP clients can grant
+read-only or read-write access independently.
+
+Tools:
+  - read_purchase_order / manage_purchase_order — list/get vs create/update
+  - read_vendor         / manage_vendor         — list/get vs create/update/delete
 """
 from typing import Any, Dict, List, Optional
 
@@ -14,71 +17,40 @@ from ..http_client import (
     handle_error,
     parse_link_header,
 )
+from ._split import reject_unless_in
 
 
 def register_procurement_tools(mcp) -> None:
     """Register procurement-related tools on *mcp*."""
 
     # ------------------------------------------------------------------ #
-    #  manage_purchase_order                                               #
+    #  purchase_order — read/manage split                                 #
     # ------------------------------------------------------------------ #
-    @mcp.tool()
-    async def manage_purchase_order(
+    _READ_PO = {"list", "get"}
+    _WRITE_PO = {"create", "update"}
+
+    async def _purchase_order_handler(
         action: str,
-        purchase_order_id: Optional[int] = None,
-        # create / update fields
-        vendor_id: Optional[int] = None,
-        name: Optional[str] = None,
-        po_number: Optional[str] = None,
-        vendor_details: Optional[str] = None,
-        expected_delivery_date: Optional[str] = None,
-        shipping_address: Optional[str] = None,
-        billing_address: Optional[str] = None,
-        billing_same_as_shipping: Optional[bool] = None,
-        currency_code: Optional[str] = None,
-        conversion_rate: Optional[float] = None,
-        department_id: Optional[int] = None,
-        discount_percentage: Optional[float] = None,
-        tax_percentage: Optional[float] = None,
-        shipping_cost: Optional[float] = None,
-        purchase_items: Optional[List[Dict[str, Any]]] = None,
-        custom_fields: Optional[Dict[str, Any]] = None,
-        # list
-        page: int = 1,
-        per_page: int = 30,
+        purchase_order_id: Optional[int],
+        vendor_id: Optional[int],
+        name: Optional[str],
+        po_number: Optional[str],
+        vendor_details: Optional[str],
+        expected_delivery_date: Optional[str],
+        shipping_address: Optional[str],
+        billing_address: Optional[str],
+        billing_same_as_shipping: Optional[bool],
+        currency_code: Optional[str],
+        conversion_rate: Optional[float],
+        department_id: Optional[int],
+        discount_percentage: Optional[float],
+        tax_percentage: Optional[float],
+        shipping_cost: Optional[float],
+        purchase_items: Optional[List[Dict[str, Any]]],
+        custom_fields: Optional[Dict[str, Any]],
+        page: int,
+        per_page: int,
     ) -> Dict[str, Any]:
-        """Unified purchase order operations.
-
-        Args:
-            action: One of 'create', 'update', 'get', 'list'
-            purchase_order_id: PO ID (get, update)
-            vendor_id: Vendor ID (create — MANDATORY)
-            name: Title of the purchase order
-            po_number: Unique purchase order number
-            vendor_details: Details of the vendor
-            expected_delivery_date: Expected delivery date (YYYY-MM-DD)
-            shipping_address: Shipping address
-            billing_address: Billing address
-            billing_same_as_shipping: Whether billing matches shipping
-            currency_code: Currency code (e.g. 'USD')
-            conversion_rate: Currency conversion rate
-            department_id: Department ID
-            discount_percentage: Discount percentage on the order
-            tax_percentage: Order-level tax percentage
-            shipping_cost: Shipping cost
-            purchase_items: List of item dicts, each with item_type, item_name,
-                cost, quantity, tax_percentage (all required), plus optional
-                description and item_id
-            custom_fields: Custom field key-value pairs
-            page: Page number (list)
-            per_page: Items per page (list)
-
-        Tax Notes:
-            There are TWO tax levels: per-item (in purchase_items) and per-order
-            (tax_percentage). Do not set both to avoid double taxation.
-        """
-        action = action.lower().strip()
-
         # ---------- list ----------
         if action == "list":
             try:
@@ -145,7 +117,7 @@ def register_procurement_tools(mcp) -> None:
         if action == "update":
             if not purchase_order_id:
                 return {"error": "purchase_order_id required for update"}
-            data: Dict[str, Any] = {}
+            data = {}
             for k, v in [
                 ("vendor_id", vendor_id),
                 ("name", name),
@@ -176,49 +148,112 @@ def register_procurement_tools(mcp) -> None:
             except Exception as e:
                 return handle_error(e, "update purchase order")
 
-        return {
-            "error": f"Unknown action '{action}'. Valid: create, update, get, list"
-        }
+        return {"error": "unreachable"}
 
-    # ------------------------------------------------------------------ #
-    #  manage_vendor                                                       #
-    # ------------------------------------------------------------------ #
     @mcp.tool()
-    async def manage_vendor(
+    async def read_purchase_order(
         action: str,
-        vendor_id: Optional[int] = None,
-        # create / update fields
-        name: Optional[str] = None,
-        description: Optional[str] = None,
-        primary_email: Optional[str] = None,
-        address: Optional[str] = None,
-        contact_name: Optional[str] = None,
-        phone: Optional[str] = None,
-        custom_fields: Optional[Dict[str, Any]] = None,
-        # list
+        purchase_order_id: Optional[int] = None,
         page: int = 1,
         per_page: int = 30,
     ) -> Dict[str, Any]:
-        """Unified vendor operations.
-
-        Vendors are suppliers or service providers referenced in purchase orders
-        and associated with assets.
+        """Read Freshservice purchase orders.
 
         Args:
-            action: One of 'create', 'update', 'get', 'list', 'delete'
-            vendor_id: Vendor ID (get, update, delete)
-            name: Vendor name (create — MANDATORY)
-            description: Vendor description
-            primary_email: Primary contact email
-            address: Physical address
-            contact_name: Primary contact person name
-            phone: Contact phone number
-            custom_fields: Custom field key-value pairs
+            action: 'list', 'get'
+            purchase_order_id: Required for get
             page: Page number (list)
             per_page: Items per page (list)
         """
         action = action.lower().strip()
+        err = reject_unless_in(action, _READ_PO, "read_purchase_order", "manage_purchase_order")
+        if err:
+            return err
+        return await _purchase_order_handler(
+            action, purchase_order_id, None, None, None, None, None, None, None,
+            None, None, None, None, None, None, None, None, None, page, per_page,
+        )
 
+    @mcp.tool()
+    async def manage_purchase_order(
+        action: str,
+        purchase_order_id: Optional[int] = None,
+        vendor_id: Optional[int] = None,
+        name: Optional[str] = None,
+        po_number: Optional[str] = None,
+        vendor_details: Optional[str] = None,
+        expected_delivery_date: Optional[str] = None,
+        shipping_address: Optional[str] = None,
+        billing_address: Optional[str] = None,
+        billing_same_as_shipping: Optional[bool] = None,
+        currency_code: Optional[str] = None,
+        conversion_rate: Optional[float] = None,
+        department_id: Optional[int] = None,
+        discount_percentage: Optional[float] = None,
+        tax_percentage: Optional[float] = None,
+        shipping_cost: Optional[float] = None,
+        purchase_items: Optional[List[Dict[str, Any]]] = None,
+        custom_fields: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """Write actions on Freshservice purchase orders.
+
+        Args:
+            action: 'create', 'update'
+            purchase_order_id: PO ID (update)
+            vendor_id: Vendor ID (create — MANDATORY)
+            name: Title of the purchase order
+            po_number: Unique purchase order number
+            vendor_details: Details of the vendor
+            expected_delivery_date: Expected delivery date (YYYY-MM-DD)
+            shipping_address: Shipping address
+            billing_address: Billing address
+            billing_same_as_shipping: Whether billing matches shipping
+            currency_code: Currency code (e.g. 'USD')
+            conversion_rate: Currency conversion rate
+            department_id: Department ID
+            discount_percentage: Discount percentage on the order
+            tax_percentage: Order-level tax percentage
+            shipping_cost: Shipping cost
+            purchase_items: List of item dicts, each with item_type, item_name,
+                cost, quantity, tax_percentage (all required), plus optional
+                description and item_id
+            custom_fields: Custom field key-value pairs
+
+        Tax Notes:
+            There are TWO tax levels: per-item (in purchase_items) and per-order
+            (tax_percentage). Do not set both to avoid double taxation.
+        """
+        action = action.lower().strip()
+        err = reject_unless_in(action, _WRITE_PO, "manage_purchase_order", "read_purchase_order")
+        if err:
+            return err
+        return await _purchase_order_handler(
+            action, purchase_order_id, vendor_id, name, po_number, vendor_details,
+            expected_delivery_date, shipping_address, billing_address,
+            billing_same_as_shipping, currency_code, conversion_rate, department_id,
+            discount_percentage, tax_percentage, shipping_cost, purchase_items,
+            custom_fields, page=1, per_page=30,
+        )
+
+    # ------------------------------------------------------------------ #
+    #  vendor — read/manage split                                         #
+    # ------------------------------------------------------------------ #
+    _READ_VENDOR = {"list", "get"}
+    _WRITE_VENDOR = {"create", "update", "delete"}
+
+    async def _vendor_handler(
+        action: str,
+        vendor_id: Optional[int],
+        name: Optional[str],
+        description: Optional[str],
+        primary_email: Optional[str],
+        address: Optional[str],
+        contact_name: Optional[str],
+        phone: Optional[str],
+        custom_fields: Optional[Dict[str, Any]],
+        page: int,
+        per_page: int,
+    ) -> Dict[str, Any]:
         # ---------- list ----------
         if action == "list":
             try:
@@ -276,7 +311,7 @@ def register_procurement_tools(mcp) -> None:
         if action == "update":
             if not vendor_id:
                 return {"error": "vendor_id required for update"}
-            data: Dict[str, Any] = {}
+            data = {}
             for k, v in [
                 ("name", name),
                 ("description", description),
@@ -310,6 +345,62 @@ def register_procurement_tools(mcp) -> None:
             except Exception as e:
                 return handle_error(e, "delete vendor")
 
-        return {
-            "error": f"Unknown action '{action}'. Valid: create, update, get, list, delete"
-        }
+        return {"error": "unreachable"}
+
+    @mcp.tool()
+    async def read_vendor(
+        action: str,
+        vendor_id: Optional[int] = None,
+        page: int = 1,
+        per_page: int = 30,
+    ) -> Dict[str, Any]:
+        """Read Freshservice vendors.
+
+        Args:
+            action: 'list', 'get'
+            vendor_id: Required for get
+            page: Page number (list)
+            per_page: Items per page (list)
+        """
+        action = action.lower().strip()
+        err = reject_unless_in(action, _READ_VENDOR, "read_vendor", "manage_vendor")
+        if err:
+            return err
+        return await _vendor_handler(
+            action, vendor_id, None, None, None, None, None, None, None,
+            page, per_page,
+        )
+
+    @mcp.tool()
+    async def manage_vendor(
+        action: str,
+        vendor_id: Optional[int] = None,
+        name: Optional[str] = None,
+        description: Optional[str] = None,
+        primary_email: Optional[str] = None,
+        address: Optional[str] = None,
+        contact_name: Optional[str] = None,
+        phone: Optional[str] = None,
+        custom_fields: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """Write actions on Freshservice vendors.
+
+        Args:
+            action: 'create', 'update', 'delete'
+            vendor_id: Vendor ID (update, delete)
+            name: Vendor name (create — MANDATORY)
+            description: Vendor description
+            primary_email: Primary contact email
+            address: Physical address
+            contact_name: Primary contact person name
+            phone: Contact phone number
+            custom_fields: Custom field key-value pairs
+        """
+        action = action.lower().strip()
+        err = reject_unless_in(action, _WRITE_VENDOR, "manage_vendor", "read_vendor")
+        if err:
+            return err
+        return await _vendor_handler(
+            action, vendor_id, name, description, primary_email, address,
+            contact_name, phone, custom_fields, page=1, per_page=30,
+        )

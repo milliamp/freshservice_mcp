@@ -1,64 +1,53 @@
 """Freshservice MCP — Requesters & Requester Groups tools (consolidated).
 
-Exposes 2 tools instead of the original 12:
-  • manage_requester       — CRUD + list + filter + get_fields + add_to_group
-  • manage_requester_group — CRUD + list + get + list_members
+Each tool is exposed as a read_/manage_ pair so MCP clients can grant
+read-only or read-write access independently.
+
+Tools:
+  • read_requester       / manage_requester        — list/get/filter/get_fields vs create/update/add_to_group
+  • read_requester_group / manage_requester_group  — list/get/list_members vs create/update
 """
 from typing import Any, Dict, List, Optional
 
 from ..http_client import api_get, api_post, api_put, handle_error, parse_link_header
+from ._split import reject_unless_in
 
 
 def register_requesters_tools(mcp) -> None:
     """Register requester-related tools on *mcp*."""
 
     # ------------------------------------------------------------------ #
-    #  manage_requester                                                   #
+    #  requester — read/manage split                                      #
     # ------------------------------------------------------------------ #
-    @mcp.tool()
-    async def manage_requester(
+    _READ_REQUESTER = {"get", "list", "filter", "get_fields"}
+    _WRITE_REQUESTER = {"create", "update", "add_to_group"}
+
+    async def _requester_handler(
         action: str,
-        requester_id: Optional[int] = None,
-        # create / update
-        first_name: Optional[str] = None,
-        last_name: Optional[str] = None,
-        job_title: Optional[str] = None,
-        primary_email: Optional[str] = None,
-        secondary_emails: Optional[List[str]] = None,
-        work_phone_number: Optional[str] = None,
-        mobile_phone_number: Optional[str] = None,
-        department_ids: Optional[List[int]] = None,
-        can_see_all_tickets_from_associated_departments: Optional[bool] = None,
-        reporting_manager_id: Optional[int] = None,
-        address: Optional[str] = None,
-        time_zone: Optional[str] = None,
-        time_format: Optional[str] = None,
-        language: Optional[str] = None,
-        location_id: Optional[int] = None,
-        background_information: Optional[str] = None,
-        custom_fields: Optional[Dict[str, Any]] = None,
-        # filter
-        query: Optional[str] = None,
-        include_agents: bool = False,
-        # add_to_group
-        group_id: Optional[int] = None,
-        # list
-        page: int = 1,
-        per_page: int = 30,
+        requester_id: Optional[int],
+        first_name: Optional[str],
+        last_name: Optional[str],
+        job_title: Optional[str],
+        primary_email: Optional[str],
+        secondary_emails: Optional[List[str]],
+        work_phone_number: Optional[str],
+        mobile_phone_number: Optional[str],
+        department_ids: Optional[List[int]],
+        can_see_all_tickets_from_associated_departments: Optional[bool],
+        reporting_manager_id: Optional[int],
+        address: Optional[str],
+        time_zone: Optional[str],
+        time_format: Optional[str],
+        language: Optional[str],
+        location_id: Optional[int],
+        background_information: Optional[str],
+        custom_fields: Optional[Dict[str, Any]],
+        query: Optional[str],
+        include_agents: bool,
+        group_id: Optional[int],
+        page: int,
+        per_page: int,
     ) -> Dict[str, Any]:
-        """Unified requester operations.
-
-        Args:
-            action: 'create', 'update', 'get', 'list', 'filter', 'get_fields', 'add_to_group'
-            requester_id: Required for get, update, add_to_group
-            first_name: MANDATORY for create
-            query: Filter query string (filter)
-            include_agents: Include agents in filter results (filter)
-            group_id: Group ID (add_to_group)
-            page/per_page: Pagination (list)
-        """
-        action = action.lower().strip()
-
         if action == "get_fields":
             try:
                 resp = await api_get("requester_fields")
@@ -174,31 +163,93 @@ def register_requesters_tools(mcp) -> None:
             except Exception as e:
                 return handle_error(e, "add requester to group")
 
-        return {"error": f"Unknown action '{action}'. Valid: create, update, get, list, filter, get_fields, add_to_group"}
+        return {"error": "unreachable"}
 
-    # ------------------------------------------------------------------ #
-    #  manage_requester_group                                             #
-    # ------------------------------------------------------------------ #
     @mcp.tool()
-    async def manage_requester_group(
+    async def read_requester(
         action: str,
-        group_id: Optional[int] = None,
-        name: Optional[str] = None,
-        description: Optional[str] = None,
+        requester_id: Optional[int] = None,
+        query: Optional[str] = None,
+        include_agents: bool = False,
         page: int = 1,
         per_page: int = 30,
     ) -> Dict[str, Any]:
-        """Manage requester groups.
+        """Read Freshservice requesters.
 
         Args:
-            action: 'create', 'update', 'get', 'list', 'list_members'
-            group_id: Required for get, update, list_members
-            name: Group name (create — MANDATORY)
-            description: Group description
+            action: 'list', 'get', 'filter', 'get_fields'
+            requester_id: Required for get
+            query: Filter query string (filter)
+            include_agents: Include agents in filter results (filter)
             page/per_page: Pagination (list)
         """
         action = action.lower().strip()
+        err = reject_unless_in(action, _READ_REQUESTER, "read_requester", "manage_requester")
+        if err:
+            return err
+        return await _requester_handler(
+            action, requester_id, None, None, None, None, None, None, None, None,
+            None, None, None, None, None, None, None, None, None,
+            query, include_agents, None, page, per_page,
+        )
 
+    @mcp.tool()
+    async def manage_requester(
+        action: str,
+        requester_id: Optional[int] = None,
+        first_name: Optional[str] = None,
+        last_name: Optional[str] = None,
+        job_title: Optional[str] = None,
+        primary_email: Optional[str] = None,
+        secondary_emails: Optional[List[str]] = None,
+        work_phone_number: Optional[str] = None,
+        mobile_phone_number: Optional[str] = None,
+        department_ids: Optional[List[int]] = None,
+        can_see_all_tickets_from_associated_departments: Optional[bool] = None,
+        reporting_manager_id: Optional[int] = None,
+        address: Optional[str] = None,
+        time_zone: Optional[str] = None,
+        time_format: Optional[str] = None,
+        language: Optional[str] = None,
+        location_id: Optional[int] = None,
+        background_information: Optional[str] = None,
+        custom_fields: Optional[Dict[str, Any]] = None,
+        group_id: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """Write actions on Freshservice requesters.
+
+        Args:
+            action: 'create', 'update', 'add_to_group'
+            requester_id: Required for update, add_to_group
+            first_name: MANDATORY for create
+            group_id: Group ID (add_to_group)
+        """
+        action = action.lower().strip()
+        err = reject_unless_in(action, _WRITE_REQUESTER, "manage_requester", "read_requester")
+        if err:
+            return err
+        return await _requester_handler(
+            action, requester_id, first_name, last_name, job_title, primary_email,
+            secondary_emails, work_phone_number, mobile_phone_number, department_ids,
+            can_see_all_tickets_from_associated_departments, reporting_manager_id,
+            address, time_zone, time_format, language, location_id,
+            background_information, custom_fields, None, False, group_id, 1, 30,
+        )
+
+    # ------------------------------------------------------------------ #
+    #  requester_group — read/manage split                                #
+    # ------------------------------------------------------------------ #
+    _READ_REQUESTER_GROUP = {"list", "get", "list_members"}
+    _WRITE_REQUESTER_GROUP = {"create", "update"}
+
+    async def _requester_group_handler(
+        action: str,
+        group_id: Optional[int],
+        name: Optional[str],
+        description: Optional[str],
+        page: int,
+        per_page: int,
+    ) -> Dict[str, Any]:
         if action == "list":
             try:
                 resp = await api_get("requester_groups", params={"page": page, "per_page": per_page})
@@ -265,4 +316,45 @@ def register_requesters_tools(mcp) -> None:
             except Exception as e:
                 return handle_error(e, "list requester group members")
 
-        return {"error": f"Unknown action '{action}'. Valid: create, update, get, list, list_members"}
+        return {"error": "unreachable"}
+
+    @mcp.tool()
+    async def read_requester_group(
+        action: str,
+        group_id: Optional[int] = None,
+        page: int = 1,
+        per_page: int = 30,
+    ) -> Dict[str, Any]:
+        """Read Freshservice requester groups.
+
+        Args:
+            action: 'list', 'get', 'list_members'
+            group_id: Required for get, list_members
+            page/per_page: Pagination (list)
+        """
+        action = action.lower().strip()
+        err = reject_unless_in(action, _READ_REQUESTER_GROUP, "read_requester_group", "manage_requester_group")
+        if err:
+            return err
+        return await _requester_group_handler(action, group_id, None, None, page, per_page)
+
+    @mcp.tool()
+    async def manage_requester_group(
+        action: str,
+        group_id: Optional[int] = None,
+        name: Optional[str] = None,
+        description: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Write actions on Freshservice requester groups.
+
+        Args:
+            action: 'create', 'update'
+            group_id: Required for update
+            name: Group name (create — MANDATORY)
+            description: Group description
+        """
+        action = action.lower().strip()
+        err = reject_unless_in(action, _WRITE_REQUESTER_GROUP, "manage_requester_group", "read_requester_group")
+        if err:
+            return err
+        return await _requester_group_handler(action, group_id, name, description, 1, 30)

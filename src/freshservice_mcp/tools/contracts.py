@@ -1,7 +1,11 @@
 """Freshservice MCP — Contracts tools.
 
-Exposes 1 tool:
-  - manage_contract — CRUD + list + get_types + get_type + get_type_fields
+Each tool is exposed as a read_/manage_ pair so MCP clients can grant
+read-only or read-write access independently.
+
+Tools:
+  - read_contract / manage_contract — list/get/get_types/get_type/get_type_fields
+                                       vs create/update/delete
 """
 from typing import Any, Dict, List, Optional
 
@@ -13,71 +17,43 @@ from ..http_client import (
     handle_error,
     parse_link_header,
 )
+from ._split import reject_unless_in
 
 
 def register_contracts_tools(mcp) -> None:
     """Register contract-related tools on *mcp*."""
 
-    @mcp.tool()
-    async def manage_contract(
+    # ------------------------------------------------------------------ #
+    #  contract — read/manage split                                       #
+    # ------------------------------------------------------------------ #
+    _READ_CONTRACT = {"list", "get", "get_types", "get_type", "get_type_fields"}
+    _WRITE_CONTRACT = {"create", "update", "delete"}
+
+    async def _contract_handler(
         action: str,
-        contract_id: Optional[int] = None,
-        contract_type_id: Optional[int] = None,
-        # create / update fields
-        name: Optional[str] = None,
-        description: Optional[str] = None,
-        vendor_id: Optional[int] = None,
-        approver_id: Optional[int] = None,
-        start_date: Optional[str] = None,
-        end_date: Optional[str] = None,
-        cost: Optional[int] = None,
-        contract_number: Optional[str] = None,
-        auto_renew: Optional[bool] = None,
-        notify_expiry: Optional[bool] = None,
-        notify_before: Optional[int] = None,
-        visible_to_id: Optional[int] = None,
-        software_id: Optional[int] = None,
-        notify_to: Optional[List[str]] = None,
-        billing_cycle: Optional[str] = None,
-        associated_asset_ids: Optional[List[int]] = None,
-        item_cost_details: Optional[List[Dict[str, Any]]] = None,
-        custom_fields: Optional[Dict[str, Any]] = None,
-        # list
-        page: int = 1,
-        per_page: int = 30,
+        contract_id: Optional[int],
+        contract_type_id: Optional[int],
+        name: Optional[str],
+        description: Optional[str],
+        vendor_id: Optional[int],
+        approver_id: Optional[int],
+        start_date: Optional[str],
+        end_date: Optional[str],
+        cost: Optional[int],
+        contract_number: Optional[str],
+        auto_renew: Optional[bool],
+        notify_expiry: Optional[bool],
+        notify_before: Optional[int],
+        visible_to_id: Optional[int],
+        software_id: Optional[int],
+        notify_to: Optional[List[str]],
+        billing_cycle: Optional[str],
+        associated_asset_ids: Optional[List[int]],
+        item_cost_details: Optional[List[Dict[str, Any]]],
+        custom_fields: Optional[Dict[str, Any]],
+        page: int,
+        per_page: int,
     ) -> Dict[str, Any]:
-        """Manage Freshservice contracts.
-
-        Args:
-            action: One of 'create', 'update', 'get', 'list', 'delete',
-                    'get_types', 'get_type', 'get_type_fields'
-            contract_id: Required for get, update, delete
-            contract_type_id: Contract type ID (create - REQUIRED).
-                1=Lease, 2=Maintenance, 3=Software License, 4=Warranty.
-                Also required for get_type and get_type_fields.
-            name: Contract name (create - REQUIRED)
-            description: Contract description
-            vendor_id: Vendor ID (create - REQUIRED)
-            approver_id: Approver ID (create - REQUIRED)
-            start_date: ISO date YYYY-MM-DD (create - REQUIRED)
-            end_date: ISO date YYYY-MM-DD (create - REQUIRED)
-            cost: Total contract cost (create - REQUIRED)
-            contract_number: Unique contract number (create - REQUIRED)
-            auto_renew: Auto-renew flag (bool)
-            notify_expiry: Notify on expiry (bool)
-            notify_before: Days before expiry to notify (int)
-            visible_to_id: Visibility scope ID
-            software_id: Associated software ID
-            notify_to: List of email addresses to notify
-            billing_cycle: One of 'monthly', 'quarterly', 'half_yearly', 'annual', 'one_time'
-            associated_asset_ids: List of asset IDs to associate
-            item_cost_details: List of item cost detail dicts
-            custom_fields: Custom fields dict
-            page: Page number (list)
-            per_page: Items per page 1-100 (list)
-        """
-        action = action.lower().strip()
-
         # ---------- get_types ----------
         if action == "get_types":
             try:
@@ -237,4 +213,94 @@ def register_contracts_tools(mcp) -> None:
             except Exception as e:
                 return handle_error(e, "delete contract")
 
-        return {"error": f"Unknown action '{action}'. Valid: create, update, get, list, delete, get_types, get_type, get_type_fields"}
+        return {"error": "unreachable"}
+
+    @mcp.tool()
+    async def read_contract(
+        action: str,
+        contract_id: Optional[int] = None,
+        contract_type_id: Optional[int] = None,
+        page: int = 1,
+        per_page: int = 30,
+    ) -> Dict[str, Any]:
+        """Read Freshservice contracts.
+
+        Args:
+            action: One of 'list', 'get', 'get_types', 'get_type', 'get_type_fields'
+            contract_id: Required for get
+            contract_type_id: Required for get_type, get_type_fields.
+                1=Lease, 2=Maintenance, 3=Software License, 4=Warranty.
+            page: Page number (list)
+            per_page: Items per page 1-100 (list)
+        """
+        action = action.lower().strip()
+        err = reject_unless_in(action, _READ_CONTRACT, "read_contract", "manage_contract")
+        if err:
+            return err
+        return await _contract_handler(
+            action, contract_id, contract_type_id, None, None, None, None, None,
+            None, None, None, None, None, None, None, None, None, None, None,
+            None, None, page, per_page,
+        )
+
+    @mcp.tool()
+    async def manage_contract(
+        action: str,
+        contract_id: Optional[int] = None,
+        contract_type_id: Optional[int] = None,
+        name: Optional[str] = None,
+        description: Optional[str] = None,
+        vendor_id: Optional[int] = None,
+        approver_id: Optional[int] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        cost: Optional[int] = None,
+        contract_number: Optional[str] = None,
+        auto_renew: Optional[bool] = None,
+        notify_expiry: Optional[bool] = None,
+        notify_before: Optional[int] = None,
+        visible_to_id: Optional[int] = None,
+        software_id: Optional[int] = None,
+        notify_to: Optional[List[str]] = None,
+        billing_cycle: Optional[str] = None,
+        associated_asset_ids: Optional[List[int]] = None,
+        item_cost_details: Optional[List[Dict[str, Any]]] = None,
+        custom_fields: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """Write actions on Freshservice contracts.
+
+        Args:
+            action: One of 'create', 'update', 'delete'
+            contract_id: Required for update, delete
+            contract_type_id: Contract type ID (create - REQUIRED).
+                1=Lease, 2=Maintenance, 3=Software License, 4=Warranty.
+            name: Contract name (create - REQUIRED)
+            description: Contract description
+            vendor_id: Vendor ID (create - REQUIRED)
+            approver_id: Approver ID (create - REQUIRED)
+            start_date: ISO date YYYY-MM-DD (create - REQUIRED)
+            end_date: ISO date YYYY-MM-DD (create - REQUIRED)
+            cost: Total contract cost (create - REQUIRED)
+            contract_number: Unique contract number (create - REQUIRED)
+            auto_renew: Auto-renew flag (bool)
+            notify_expiry: Notify on expiry (bool)
+            notify_before: Days before expiry to notify (int)
+            visible_to_id: Visibility scope ID
+            software_id: Associated software ID
+            notify_to: List of email addresses to notify
+            billing_cycle: One of 'monthly', 'quarterly', 'half_yearly', 'annual', 'one_time'
+            associated_asset_ids: List of asset IDs to associate
+            item_cost_details: List of item cost detail dicts
+            custom_fields: Custom fields dict
+        """
+        action = action.lower().strip()
+        err = reject_unless_in(action, _WRITE_CONTRACT, "manage_contract", "read_contract")
+        if err:
+            return err
+        return await _contract_handler(
+            action, contract_id, contract_type_id, name, description, vendor_id,
+            approver_id, start_date, end_date, cost, contract_number, auto_renew,
+            notify_expiry, notify_before, visible_to_id, software_id, notify_to,
+            billing_cycle, associated_asset_ids, item_cost_details, custom_fields,
+            page=1, per_page=30,
+        )

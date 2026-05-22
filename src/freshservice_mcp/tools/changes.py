@@ -1,13 +1,15 @@
 """Freshservice MCP — Changes tools (consolidated).
 
-Exposes 5 tools instead of the original 33:
-  • manage_change           — CRUD + list + filter + close + move + get_fields
-  • manage_change_note      — create, view, list, update, delete
-  • manage_change_task      — create, view, list, update, delete
-  • manage_change_time_entry — create, view, list, update, delete
-  • manage_change_approval  — groups + approvals CRUD, chain rule, reminders
+Each consolidated tool is exposed as a read_/manage_ pair so MCP clients
+can grant read-only or read-write access independently.
+
+Tools:
+  • read_change / manage_change                   — list/filter/get/get_fields vs create/update/delete/close/move
+  • read_change_note / manage_change_note         — list/view vs create/update/delete
+  • read_change_task / manage_change_task         — list/view vs create/update/delete
+  • read_change_time_entry / manage_change_time_entry — list/view vs create/update/delete
+  • read_change_approval / manage_change_approval — list/view vs create/update/cancel/remind/set_chain_rule
 """
-import urllib.parse
 from typing import Any, Dict, List, Optional, Union
 
 import httpx
@@ -27,6 +29,7 @@ from ..http_client import (
     handle_error,
     parse_link_header,
 )
+from ._split import reject_unless_in
 
 
 # ── registration ───────────────────────────────────────────────────────────
@@ -34,13 +37,14 @@ def register_changes_tools(mcp) -> None:  # noqa: C901 – large by nature
     """Register change-related tools on *mcp*."""
 
     # ------------------------------------------------------------------ #
-    #  manage_change                                                      #
+    #  change — read/manage split                                         #
     # ------------------------------------------------------------------ #
-    @mcp.tool()
-    async def manage_change(
+    _READ_CHANGE = {"get", "list", "filter", "get_fields"}
+    _WRITE_CHANGE = {"create", "update", "delete", "close", "move"}
+
+    async def _change_handler(
         action: str,
         change_id: Optional[int] = None,
-        # create / update fields
         requester_id: Optional[int] = None,
         subject: Optional[str] = None,
         description: Optional[str] = None,
@@ -65,11 +69,8 @@ def register_changes_tools(mcp) -> None:  # noqa: C901 – large by nature
         assets: Optional[List[Dict[str, Any]]] = None,
         impacted_services: Optional[List[Dict[str, Any]]] = None,
         maintenance_window_id: Optional[int] = None,
-        # close
         change_result_explanation: Optional[str] = None,
-        # move
         workspace_id: Optional[int] = None,
-        # list / filter
         query: Optional[str] = None,
         view: Optional[str] = None,
         sort: Optional[str] = None,
@@ -78,54 +79,6 @@ def register_changes_tools(mcp) -> None:  # noqa: C901 – large by nature
         page: int = 1,
         per_page: int = 30,
     ) -> Dict[str, Any]:
-        """Unified change operations.
-
-        Args:
-            action: One of 'create', 'update', 'delete', 'get', 'list', 'filter',
-                    'close', 'move', 'get_fields'
-            change_id: Required for get, update, delete, close, move
-            requester_id: Initiator ID (create — MANDATORY)
-            subject: Change subject (create — MANDATORY)
-            description: HTML description (create — MANDATORY)
-            priority: 1=Low, 2=Medium, 3=High, 4=Urgent
-            impact: 1=Low, 2=Medium, 3=High
-            status: 1=Open, 2=Planning, 3=Awaiting Approval, 4=Pending Release,
-                    5=Pending Review, 6=Closed
-            risk: 1=Low, 2=Medium, 3=High, 4=Very High
-            change_type: 1=Minor, 2=Standard, 3=Major, 4=Emergency
-            group_id: Agent group ID
-            agent_id: Agent ID
-            department_id: Department ID
-            category: Category string
-            sub_category: Sub-category string
-            item_category: Item category string
-            planned_start_date: ISO datetime
-            planned_end_date: ISO datetime
-            reason_for_change: Planning field — reason (text/HTML)
-            change_impact: Planning field — impact analysis (text/HTML)
-            rollout_plan: Planning field — rollout plan (text/HTML)
-            backout_plan: Planning field — backout plan (text/HTML)
-            custom_fields: Custom fields dict
-            assets: Assets list (associated CIs), e.g. [{"display_id": 1}]
-            impacted_services: Impacted services list, e.g. [{"display_id": 167456}]
-                NOTE: This is different from 'assets'. Assets = associated CIs,
-                impacted_services = business services affected by the change.
-            maintenance_window_id: Maintenance Window ID to associate with
-                this Change. On create, applied via follow-up PUT. On update,
-                sent as {"maintenance_window": {"id": <value>}}.
-                Use this to link a Change to an existing Maintenance Window.
-            change_result_explanation: Result explanation (close)
-            workspace_id: Target workspace (move / list / filter)
-            query: Filter query string (list/filter)
-            view: View name or ID (list)
-            sort: Sort field (list)
-            order_by: 'asc' or 'desc' (list)
-            updated_since: ISO datetime (list)
-            page: Page number
-            per_page: Items per page 1-100
-        """
-        action = action.lower().strip()
-
         # ---------- get_fields ----------
         if action == "get_fields":
             try:
@@ -377,27 +330,171 @@ def register_changes_tools(mcp) -> None:  # noqa: C901 – large by nature
             except Exception as e:
                 return handle_error(e, "move change")
 
-        return {"error": f"Unknown action '{action}'. Valid: create, update, delete, get, list, filter, close, move, get_fields"}
+        return {"error": "unreachable"}
+
+    @mcp.tool()
+    async def read_change(
+        action: str,
+        change_id: Optional[int] = None,
+        query: Optional[str] = None,
+        view: Optional[str] = None,
+        sort: Optional[str] = None,
+        order_by: Optional[str] = None,
+        updated_since: Optional[str] = None,
+        workspace_id: Optional[int] = None,
+        page: int = 1,
+        per_page: int = 30,
+    ) -> Dict[str, Any]:
+        """Read Freshservice changes.
+
+        Args:
+            action: 'get', 'list', 'filter', 'get_fields'
+            change_id: Required for get
+            query: Filter query string (list/filter)
+            view: View name or ID (list)
+            sort: Sort field (list)
+            order_by: 'asc' or 'desc' (list)
+            updated_since: ISO datetime (list)
+            workspace_id: Target workspace (list/filter)
+            page: Page number
+            per_page: Items per page 1-100
+        """
+        action = action.lower().strip()
+        err = reject_unless_in(action, _READ_CHANGE, "read_change", "manage_change")
+        if err:
+            return err
+        return await _change_handler(
+            action,
+            change_id=change_id,
+            query=query,
+            view=view,
+            sort=sort,
+            order_by=order_by,
+            updated_since=updated_since,
+            workspace_id=workspace_id,
+            page=page,
+            per_page=per_page,
+        )
+
+    @mcp.tool()
+    async def manage_change(
+        action: str,
+        change_id: Optional[int] = None,
+        # create / update fields
+        requester_id: Optional[int] = None,
+        subject: Optional[str] = None,
+        description: Optional[str] = None,
+        priority: Optional[Union[int, str]] = None,
+        impact: Optional[Union[int, str]] = None,
+        status: Optional[Union[int, str]] = None,
+        risk: Optional[Union[int, str]] = None,
+        change_type: Optional[Union[int, str]] = None,
+        group_id: Optional[int] = None,
+        agent_id: Optional[int] = None,
+        department_id: Optional[int] = None,
+        category: Optional[str] = None,
+        sub_category: Optional[str] = None,
+        item_category: Optional[str] = None,
+        planned_start_date: Optional[str] = None,
+        planned_end_date: Optional[str] = None,
+        reason_for_change: Optional[str] = None,
+        change_impact: Optional[str] = None,
+        rollout_plan: Optional[str] = None,
+        backout_plan: Optional[str] = None,
+        custom_fields: Optional[Dict[str, Any]] = None,
+        assets: Optional[List[Dict[str, Any]]] = None,
+        impacted_services: Optional[List[Dict[str, Any]]] = None,
+        maintenance_window_id: Optional[int] = None,
+        # close
+        change_result_explanation: Optional[str] = None,
+        # move
+        workspace_id: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """Write actions on Freshservice changes.
+
+        Args:
+            action: One of 'create', 'update', 'delete', 'close', 'move'
+            change_id: Required for update, delete, close, move
+            requester_id: Initiator ID (create — MANDATORY)
+            subject: Change subject (create — MANDATORY)
+            description: HTML description (create — MANDATORY)
+            priority: 1=Low, 2=Medium, 3=High, 4=Urgent
+            impact: 1=Low, 2=Medium, 3=High
+            status: 1=Open, 2=Planning, 3=Awaiting Approval, 4=Pending Release,
+                    5=Pending Review, 6=Closed
+            risk: 1=Low, 2=Medium, 3=High, 4=Very High
+            change_type: 1=Minor, 2=Standard, 3=Major, 4=Emergency
+            group_id: Agent group ID
+            agent_id: Agent ID
+            department_id: Department ID
+            category: Category string
+            sub_category: Sub-category string
+            item_category: Item category string
+            planned_start_date: ISO datetime
+            planned_end_date: ISO datetime
+            reason_for_change: Planning field — reason (text/HTML)
+            change_impact: Planning field — impact analysis (text/HTML)
+            rollout_plan: Planning field — rollout plan (text/HTML)
+            backout_plan: Planning field — backout plan (text/HTML)
+            custom_fields: Custom fields dict
+            assets: Assets list (associated CIs), e.g. [{"display_id": 1}]
+            impacted_services: Impacted services list, e.g. [{"display_id": 167456}]
+                NOTE: This is different from 'assets'. Assets = associated CIs,
+                impacted_services = business services affected by the change.
+            maintenance_window_id: Maintenance Window ID to associate with
+                this Change. On create, applied via follow-up PUT. On update,
+                sent as {"maintenance_window": {"id": <value>}}.
+                Use this to link a Change to an existing Maintenance Window.
+            change_result_explanation: Result explanation (close)
+            workspace_id: Target workspace (move)
+        """
+        action = action.lower().strip()
+        err = reject_unless_in(action, _WRITE_CHANGE, "manage_change", "read_change")
+        if err:
+            return err
+        return await _change_handler(
+            action,
+            change_id=change_id,
+            requester_id=requester_id,
+            subject=subject,
+            description=description,
+            priority=priority,
+            impact=impact,
+            status=status,
+            risk=risk,
+            change_type=change_type,
+            group_id=group_id,
+            agent_id=agent_id,
+            department_id=department_id,
+            category=category,
+            sub_category=sub_category,
+            item_category=item_category,
+            planned_start_date=planned_start_date,
+            planned_end_date=planned_end_date,
+            reason_for_change=reason_for_change,
+            change_impact=change_impact,
+            rollout_plan=rollout_plan,
+            backout_plan=backout_plan,
+            custom_fields=custom_fields,
+            assets=assets,
+            impacted_services=impacted_services,
+            maintenance_window_id=maintenance_window_id,
+            change_result_explanation=change_result_explanation,
+            workspace_id=workspace_id,
+        )
 
     # ------------------------------------------------------------------ #
-    #  manage_change_note                                                 #
+    #  change_note — read/manage split                                    #
     # ------------------------------------------------------------------ #
-    @mcp.tool()
-    async def manage_change_note(
+    _READ_CHANGE_NOTE = {"list", "view"}
+    _WRITE_CHANGE_NOTE = {"create", "update", "delete"}
+
+    async def _change_note_handler(
         action: str,
         change_id: int,
         note_id: Optional[int] = None,
         body: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Manage notes on a change.
-
-        Args:
-            action: 'create', 'view', 'list', 'update', 'delete'
-            change_id: The change ID
-            note_id: Required for view, update, delete
-            body: Note body HTML (create, update)
-        """
-        action = action.lower().strip()
         base = f"changes/{change_id}/notes"
 
         if action == "list":
@@ -450,13 +547,55 @@ def register_changes_tools(mcp) -> None:  # noqa: C901 – large by nature
             except Exception as e:
                 return handle_error(e, "delete change note")
 
-        return {"error": f"Unknown action '{action}'. Valid: create, view, list, update, delete"}
+        return {"error": "unreachable"}
+
+    @mcp.tool()
+    async def read_change_note(
+        action: str,
+        change_id: int,
+        note_id: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """Read notes on a change.
+
+        Args:
+            action: 'list', 'view'
+            change_id: The change ID
+            note_id: Required for view
+        """
+        action = action.lower().strip()
+        err = reject_unless_in(action, _READ_CHANGE_NOTE, "read_change_note", "manage_change_note")
+        if err:
+            return err
+        return await _change_note_handler(action, change_id, note_id=note_id)
+
+    @mcp.tool()
+    async def manage_change_note(
+        action: str,
+        change_id: int,
+        note_id: Optional[int] = None,
+        body: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Write actions on change notes.
+
+        Args:
+            action: 'create', 'update', 'delete'
+            change_id: The change ID
+            note_id: Required for update, delete
+            body: Note body HTML (create, update)
+        """
+        action = action.lower().strip()
+        err = reject_unless_in(action, _WRITE_CHANGE_NOTE, "manage_change_note", "read_change_note")
+        if err:
+            return err
+        return await _change_note_handler(action, change_id, note_id=note_id, body=body)
 
     # ------------------------------------------------------------------ #
-    #  manage_change_task                                                 #
+    #  change_task — read/manage split                                    #
     # ------------------------------------------------------------------ #
-    @mcp.tool()
-    async def manage_change_task(
+    _READ_CHANGE_TASK = {"list", "view"}
+    _WRITE_CHANGE_TASK = {"create", "update", "delete"}
+
+    async def _change_task_handler(
         action: str,
         change_id: int,
         task_id: Optional[int] = None,
@@ -469,22 +608,6 @@ def register_changes_tools(mcp) -> None:  # noqa: C901 – large by nature
         due_date: Optional[str] = None,
         task_fields: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
-        """Manage tasks on a change.
-
-        Args:
-            action: 'create', 'view', 'list', 'update', 'delete'
-            change_id: The change ID
-            task_id: Required for view, update, delete
-            title: Task title (create)
-            description: Task description (create)
-            task_status: Task status int (create/update)
-            task_priority: Task priority int (create/update)
-            assigned_to_id: Agent ID to assign (create/update)
-            task_group_id: Group ID (create/update)
-            due_date: ISO date (create/update)
-            task_fields: Dict of fields (update — alternative to individual params)
-        """
-        action = action.lower().strip()
         base = f"changes/{change_id}/tasks"
 
         if action == "list":
@@ -549,13 +672,81 @@ def register_changes_tools(mcp) -> None:  # noqa: C901 – large by nature
             except Exception as e:
                 return handle_error(e, "delete change task")
 
-        return {"error": f"Unknown action '{action}'. Valid: create, view, list, update, delete"}
+        return {"error": "unreachable"}
+
+    @mcp.tool()
+    async def read_change_task(
+        action: str,
+        change_id: int,
+        task_id: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """Read tasks on a change.
+
+        Args:
+            action: 'list', 'view'
+            change_id: The change ID
+            task_id: Required for view
+        """
+        action = action.lower().strip()
+        err = reject_unless_in(action, _READ_CHANGE_TASK, "read_change_task", "manage_change_task")
+        if err:
+            return err
+        return await _change_task_handler(action, change_id, task_id=task_id)
+
+    @mcp.tool()
+    async def manage_change_task(
+        action: str,
+        change_id: int,
+        task_id: Optional[int] = None,
+        title: Optional[str] = None,
+        description: Optional[str] = None,
+        task_status: Optional[int] = None,
+        task_priority: Optional[int] = None,
+        assigned_to_id: Optional[int] = None,
+        task_group_id: Optional[int] = None,
+        due_date: Optional[str] = None,
+        task_fields: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """Write actions on change tasks.
+
+        Args:
+            action: 'create', 'update', 'delete'
+            change_id: The change ID
+            task_id: Required for update, delete
+            title: Task title (create)
+            description: Task description (create)
+            task_status: Task status int (create/update)
+            task_priority: Task priority int (create/update)
+            assigned_to_id: Agent ID to assign (create/update)
+            task_group_id: Group ID (create/update)
+            due_date: ISO date (create/update)
+            task_fields: Dict of fields (update — alternative to individual params)
+        """
+        action = action.lower().strip()
+        err = reject_unless_in(action, _WRITE_CHANGE_TASK, "manage_change_task", "read_change_task")
+        if err:
+            return err
+        return await _change_task_handler(
+            action,
+            change_id,
+            task_id=task_id,
+            title=title,
+            description=description,
+            task_status=task_status,
+            task_priority=task_priority,
+            assigned_to_id=assigned_to_id,
+            task_group_id=task_group_id,
+            due_date=due_date,
+            task_fields=task_fields,
+        )
 
     # ------------------------------------------------------------------ #
-    #  manage_change_time_entry                                           #
+    #  change_time_entry — read/manage split                              #
     # ------------------------------------------------------------------ #
-    @mcp.tool()
-    async def manage_change_time_entry(
+    _READ_CHANGE_TIME_ENTRY = {"list", "view"}
+    _WRITE_CHANGE_TIME_ENTRY = {"create", "update", "delete"}
+
+    async def _change_time_entry_handler(
         action: str,
         change_id: int,
         time_entry_id: Optional[int] = None,
@@ -564,18 +755,6 @@ def register_changes_tools(mcp) -> None:  # noqa: C901 – large by nature
         te_agent_id: Optional[int] = None,
         executed_at: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Manage time entries on a change.
-
-        Args:
-            action: 'create', 'view', 'list', 'update', 'delete'
-            change_id: The change ID
-            time_entry_id: Required for view, update, delete
-            time_spent: Format "hh:mm" (create/update)
-            note: Work description (create/update)
-            te_agent_id: Agent ID who did the work (create)
-            executed_at: ISO datetime (create)
-        """
-        action = action.lower().strip()
         base = f"changes/{change_id}/time_entries"
 
         if action == "list":
@@ -636,13 +815,72 @@ def register_changes_tools(mcp) -> None:  # noqa: C901 – large by nature
             except Exception as e:
                 return handle_error(e, "delete time entry")
 
-        return {"error": f"Unknown action '{action}'. Valid: create, view, list, update, delete"}
+        return {"error": "unreachable"}
+
+    @mcp.tool()
+    async def read_change_time_entry(
+        action: str,
+        change_id: int,
+        time_entry_id: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """Read time entries on a change.
+
+        Args:
+            action: 'list', 'view'
+            change_id: The change ID
+            time_entry_id: Required for view
+        """
+        action = action.lower().strip()
+        err = reject_unless_in(action, _READ_CHANGE_TIME_ENTRY, "read_change_time_entry", "manage_change_time_entry")
+        if err:
+            return err
+        return await _change_time_entry_handler(action, change_id, time_entry_id=time_entry_id)
+
+    @mcp.tool()
+    async def manage_change_time_entry(
+        action: str,
+        change_id: int,
+        time_entry_id: Optional[int] = None,
+        time_spent: Optional[str] = None,
+        note: Optional[str] = None,
+        te_agent_id: Optional[int] = None,
+        executed_at: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Write actions on change time entries.
+
+        Args:
+            action: 'create', 'update', 'delete'
+            change_id: The change ID
+            time_entry_id: Required for update, delete
+            time_spent: Format "hh:mm" (create/update)
+            note: Work description (create/update)
+            te_agent_id: Agent ID who did the work (create)
+            executed_at: ISO datetime (create)
+        """
+        action = action.lower().strip()
+        err = reject_unless_in(action, _WRITE_CHANGE_TIME_ENTRY, "manage_change_time_entry", "read_change_time_entry")
+        if err:
+            return err
+        return await _change_time_entry_handler(
+            action,
+            change_id,
+            time_entry_id=time_entry_id,
+            time_spent=time_spent,
+            note=note,
+            te_agent_id=te_agent_id,
+            executed_at=executed_at,
+        )
 
     # ------------------------------------------------------------------ #
-    #  manage_change_approval                                             #
+    #  change_approval — read/manage split                                #
     # ------------------------------------------------------------------ #
-    @mcp.tool()
-    async def manage_change_approval(
+    _READ_CHANGE_APPROVAL = {"list_groups", "list", "view"}
+    _WRITE_CHANGE_APPROVAL = {
+        "create_group", "update_group", "cancel_group",
+        "remind", "cancel", "set_chain_rule",
+    }
+
+    async def _change_approval_handler(
         action: str,
         change_id: int,
         approval_id: Optional[int] = None,
@@ -652,21 +890,6 @@ def register_changes_tools(mcp) -> None:  # noqa: C901 – large by nature
         approval_type: Optional[str] = None,
         approval_chain_type: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Manage approvals and approval groups for a change.
-
-        Args:
-            action: 'list_groups', 'create_group', 'update_group', 'cancel_group',
-                    'list', 'view', 'remind', 'cancel', 'set_chain_rule'
-            change_id: The change ID
-            approval_id: Approval ID (view, remind, cancel)
-            approval_group_id: Approval group ID (update_group, cancel_group)
-            name: Group name (create_group, update_group)
-            approver_ids: List of agent IDs (create_group, update_group)
-            approval_type: 'everyone' or 'any' (create_group, update_group)
-            approval_chain_type: 'parallel' or 'sequential' (set_chain_rule)
-        """
-        action = action.lower().strip()
-
         # -- approval groups --
         if action == "list_groups":
             try:
@@ -768,4 +991,62 @@ def register_changes_tools(mcp) -> None:  # noqa: C901 – large by nature
             except Exception as e:
                 return handle_error(e, "set chain rule")
 
-        return {"error": f"Unknown action '{action}'. Valid: create_group, update_group, cancel_group, list_groups, list, view, remind, cancel, set_chain_rule"}
+        return {"error": "unreachable"}
+
+    @mcp.tool()
+    async def read_change_approval(
+        action: str,
+        change_id: int,
+        approval_id: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """Read approvals and approval groups for a change.
+
+        Args:
+            action: 'list_groups', 'list', 'view'
+            change_id: The change ID
+            approval_id: Approval ID (view)
+        """
+        action = action.lower().strip()
+        err = reject_unless_in(action, _READ_CHANGE_APPROVAL, "read_change_approval", "manage_change_approval")
+        if err:
+            return err
+        return await _change_approval_handler(action, change_id, approval_id=approval_id)
+
+    @mcp.tool()
+    async def manage_change_approval(
+        action: str,
+        change_id: int,
+        approval_id: Optional[int] = None,
+        approval_group_id: Optional[int] = None,
+        name: Optional[str] = None,
+        approver_ids: Optional[List[int]] = None,
+        approval_type: Optional[str] = None,
+        approval_chain_type: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Write actions on change approvals and approval groups.
+
+        Args:
+            action: 'create_group', 'update_group', 'cancel_group',
+                    'remind', 'cancel', 'set_chain_rule'
+            change_id: The change ID
+            approval_id: Approval ID (remind, cancel)
+            approval_group_id: Approval group ID (update_group, cancel_group)
+            name: Group name (create_group, update_group)
+            approver_ids: List of agent IDs (create_group, update_group)
+            approval_type: 'everyone' or 'any' (create_group, update_group)
+            approval_chain_type: 'parallel' or 'sequential' (set_chain_rule)
+        """
+        action = action.lower().strip()
+        err = reject_unless_in(action, _WRITE_CHANGE_APPROVAL, "manage_change_approval", "read_change_approval")
+        if err:
+            return err
+        return await _change_approval_handler(
+            action,
+            change_id,
+            approval_id=approval_id,
+            approval_group_id=approval_group_id,
+            name=name,
+            approver_ids=approver_ids,
+            approval_type=approval_type,
+            approval_chain_type=approval_chain_type,
+        )

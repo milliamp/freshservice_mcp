@@ -1,50 +1,40 @@
 """Freshservice MCP — Department tools.
 
-Exposes 1 tool:
-  • manage_department — CRUD + list + filter departments
+Each tool is exposed as a read_/manage_ pair so MCP clients can grant
+read-only or read-write access independently.
+
+Tools:
+  - read_department / manage_department — list/get/filter/get_fields vs
+                                          create/update/delete
 """
 from typing import Any, Dict, List, Optional
 
 from ..http_client import api_delete, api_get, api_post, api_put, handle_error
+from ._split import reject_unless_in
 
 
 def register_department_tools(mcp) -> None:
     """Register department tools on *mcp*."""
 
-    @mcp.tool()
-    async def manage_department(
+    # ------------------------------------------------------------------ #
+    #  department — read/manage split                                     #
+    # ------------------------------------------------------------------ #
+    _READ_DEPARTMENT = {"list", "get", "filter", "get_fields"}
+    _WRITE_DEPARTMENT = {"create", "update", "delete"}
+
+    async def _department_handler(
         action: str,
-        department_id: Optional[int] = None,
-        # creation / update fields
-        name: Optional[str] = None,
-        description: Optional[str] = None,
-        head_user_id: Optional[int] = None,
-        prime_user_id: Optional[int] = None,
-        domains: Optional[List[str]] = None,
-        custom_fields: Optional[Dict[str, Any]] = None,
-        # filter / pagination
-        query: Optional[str] = None,
-        page: int = 1,
-        per_page: int = 30,
+        department_id: Optional[int],
+        name: Optional[str],
+        description: Optional[str],
+        head_user_id: Optional[int],
+        prime_user_id: Optional[int],
+        domains: Optional[List[str]],
+        custom_fields: Optional[Dict[str, Any]],
+        query: Optional[str],
+        page: int,
+        per_page: int,
     ) -> Dict[str, Any]:
-        """Manage Freshservice departments.
-
-        Args:
-            action: One of 'list', 'get', 'create', 'update', 'delete',
-                    'filter', 'get_fields'.
-            department_id: Department ID (required for get/update/delete).
-            name: Department name (required for create).
-            description: Description text.
-            head_user_id: User ID of department head.
-            prime_user_id: User ID of department prime contact.
-            domains: List of email domains for the department.
-            custom_fields: Custom field values dict.
-            query: Filter query string for 'filter' action
-                   (e.g. "name:'Engineering'").
-            page/per_page: Pagination.
-        """
-        action = action.lower().strip()
-
         if action == "list":
             try:
                 resp = await api_get("departments", params={"page": page, "per_page": per_page})
@@ -133,7 +123,62 @@ def register_department_tools(mcp) -> None:
             except Exception as e:
                 return handle_error(e, "get department fields")
 
-        return {
-            "error": f"Unknown action '{action}'. Valid: list, get, create, update, delete, "
-            "filter, get_fields"
-        }
+        return {"error": "unreachable"}
+
+    @mcp.tool()
+    async def read_department(
+        action: str,
+        department_id: Optional[int] = None,
+        query: Optional[str] = None,
+        page: int = 1,
+        per_page: int = 30,
+    ) -> Dict[str, Any]:
+        """Read Freshservice departments.
+
+        Args:
+            action: One of 'list', 'get', 'filter', 'get_fields'.
+            department_id: Department ID (required for get).
+            query: Filter query string for 'filter' action
+                   (e.g. "name:'Engineering'").
+            page/per_page: Pagination.
+        """
+        action = action.lower().strip()
+        err = reject_unless_in(action, _READ_DEPARTMENT, "read_department", "manage_department")
+        if err:
+            return err
+        return await _department_handler(
+            action, department_id, None, None, None, None, None, None,
+            query, page, per_page,
+        )
+
+    @mcp.tool()
+    async def manage_department(
+        action: str,
+        department_id: Optional[int] = None,
+        name: Optional[str] = None,
+        description: Optional[str] = None,
+        head_user_id: Optional[int] = None,
+        prime_user_id: Optional[int] = None,
+        domains: Optional[List[str]] = None,
+        custom_fields: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """Write actions on Freshservice departments.
+
+        Args:
+            action: One of 'create', 'update', 'delete'.
+            department_id: Department ID (required for update, delete).
+            name: Department name (required for create).
+            description: Description text.
+            head_user_id: User ID of department head.
+            prime_user_id: User ID of department prime contact.
+            domains: List of email domains for the department.
+            custom_fields: Custom field values dict.
+        """
+        action = action.lower().strip()
+        err = reject_unless_in(action, _WRITE_DEPARTMENT, "manage_department", "read_department")
+        if err:
+            return err
+        return await _department_handler(
+            action, department_id, name, description, head_user_id, prime_user_id,
+            domains, custom_fields, query=None, page=1, per_page=30,
+        )

@@ -1,63 +1,53 @@
 """Freshservice MCP — Solutions tools (consolidated).
 
-Exposes 1 tool instead of the original 13:
-  • manage_solution — categories, folders, articles CRUD
+The solution tool is exposed as a read_/manage_ pair so MCP clients can
+grant read-only or read-write access independently.
+
+Tools:
+  • read_solution   — list_categories/get_category/list_folders/get_folder/list_articles/get_article
+  • manage_solution — create/update categories, folders, articles + publish_article
 """
 from typing import Any, Dict, List, Optional
 
 from ..http_client import api_get, api_post, api_put, handle_error
+from ._split import reject_unless_in
 
 
 def register_solutions_tools(mcp) -> None:
     """Register solution-related tools on *mcp*."""
 
-    @mcp.tool()
-    async def manage_solution(
+    # ------------------------------------------------------------------ #
+    #  solution — read/manage split                                       #
+    # ------------------------------------------------------------------ #
+    _READ_SOLUTION = {
+        "list_categories", "get_category",
+        "list_folders", "get_folder",
+        "list_articles", "get_article",
+    }
+    _WRITE_SOLUTION = {
+        "create_category", "update_category",
+        "create_folder", "update_folder",
+        "create_article", "update_article", "publish_article",
+    }
+
+    async def _solution_handler(
         action: str,
-        # identifiers
-        category_id: Optional[int] = None,
-        folder_id: Optional[int] = None,
-        article_id: Optional[int] = None,
-        # create / update
-        name: Optional[str] = None,
-        title: Optional[str] = None,
-        description: Optional[str] = None,
-        visibility: Optional[int] = None,
-        default_category: Optional[bool] = None,
-        workspace_id: Optional[int] = None,
-        department_ids: Optional[List[int]] = None,
-        article_type: Optional[int] = None,
-        status: Optional[int] = None,
-        tags: Optional[List[str]] = None,
-        keywords: Optional[List[str]] = None,
-        review_date: Optional[str] = None,
+        category_id: Optional[int],
+        folder_id: Optional[int],
+        article_id: Optional[int],
+        name: Optional[str],
+        title: Optional[str],
+        description: Optional[str],
+        visibility: Optional[int],
+        default_category: Optional[bool],
+        workspace_id: Optional[int],
+        department_ids: Optional[List[int]],
+        article_type: Optional[int],
+        status: Optional[int],
+        tags: Optional[List[str]],
+        keywords: Optional[List[str]],
+        review_date: Optional[str],
     ) -> Dict[str, Any]:
-        """Unified solution operations for categories, folders, and articles.
-
-        Args:
-            action: One of:
-                Categories: 'list_categories', 'get_category', 'create_category', 'update_category'
-                Folders: 'list_folders', 'get_folder', 'create_folder', 'update_folder'
-                Articles: 'list_articles', 'get_article', 'create_article',
-                          'update_article', 'publish_article'
-            category_id: Category ID (get/update category, list folders, create folder)
-            folder_id: Folder ID (get/update folder, list/create articles)
-            article_id: Article ID (get/update/publish article)
-            name: Name (create/update category or folder)
-            title: Article title (create/update article)
-            description: Description text/HTML
-            visibility: Folder visibility (1=all, 2=logged-in, 3=agents, 4=depts)
-            default_category: Mark as default (update_category)
-            workspace_id: Workspace ID (create/update category)
-            department_ids: Department IDs (create folder)
-            article_type: 1=permanent, 2=workaround (create/update article)
-            status: 1=draft, 2=published (create/update article)
-            tags: Article tags list
-            keywords: SEO keywords list
-            review_date: ISO date for article review
-        """
-        action = action.lower().strip()
-
         # ── Categories ──
         if action == "list_categories":
             try:
@@ -237,4 +227,82 @@ def register_solutions_tools(mcp) -> None:
             except Exception as e:
                 return handle_error(e, "publish solution article")
 
-        return {"error": f"Unknown action '{action}'. Valid: list_categories, get_category, create_category, update_category, list_folders, get_folder, create_folder, update_folder, list_articles, get_article, create_article, update_article, publish_article"}
+        return {"error": "unreachable"}
+
+    @mcp.tool()
+    async def read_solution(
+        action: str,
+        category_id: Optional[int] = None,
+        folder_id: Optional[int] = None,
+        article_id: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """Read Freshservice solution categories, folders, and articles.
+
+        Args:
+            action: 'list_categories', 'get_category',
+                    'list_folders', 'get_folder',
+                    'list_articles', 'get_article'
+            category_id: Category ID (get_category, list_folders)
+            folder_id: Folder ID (get_folder, list_articles)
+            article_id: Article ID (get_article)
+        """
+        action = action.lower().strip()
+        err = reject_unless_in(action, _READ_SOLUTION, "read_solution", "manage_solution")
+        if err:
+            return err
+        return await _solution_handler(
+            action, category_id, folder_id, article_id,
+            None, None, None, None, None, None, None, None, None, None, None, None,
+        )
+
+    @mcp.tool()
+    async def manage_solution(
+        action: str,
+        category_id: Optional[int] = None,
+        folder_id: Optional[int] = None,
+        article_id: Optional[int] = None,
+        name: Optional[str] = None,
+        title: Optional[str] = None,
+        description: Optional[str] = None,
+        visibility: Optional[int] = None,
+        default_category: Optional[bool] = None,
+        workspace_id: Optional[int] = None,
+        department_ids: Optional[List[int]] = None,
+        article_type: Optional[int] = None,
+        status: Optional[int] = None,
+        tags: Optional[List[str]] = None,
+        keywords: Optional[List[str]] = None,
+        review_date: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Write actions on Freshservice solution categories, folders, and articles.
+
+        Args:
+            action: One of:
+                Categories: 'create_category', 'update_category'
+                Folders: 'create_folder', 'update_folder'
+                Articles: 'create_article', 'update_article', 'publish_article'
+            category_id: Category ID (update_category, create_folder)
+            folder_id: Folder ID (update_folder, create_article)
+            article_id: Article ID (update/publish article)
+            name: Name (create/update category or folder)
+            title: Article title (create/update article)
+            description: Description text/HTML
+            visibility: Folder visibility (1=all, 2=logged-in, 3=agents, 4=depts)
+            default_category: Mark as default (update_category)
+            workspace_id: Workspace ID (create/update category)
+            department_ids: Department IDs (create folder)
+            article_type: 1=permanent, 2=workaround (create/update article)
+            status: 1=draft, 2=published (create/update article)
+            tags: Article tags list
+            keywords: SEO keywords list
+            review_date: ISO date for article review
+        """
+        action = action.lower().strip()
+        err = reject_unless_in(action, _WRITE_SOLUTION, "manage_solution", "read_solution")
+        if err:
+            return err
+        return await _solution_handler(
+            action, category_id, folder_id, article_id,
+            name, title, description, visibility, default_category, workspace_id,
+            department_ids, article_type, status, tags, keywords, review_date,
+        )

@@ -1,57 +1,43 @@
 """Freshservice MCP — Software tools (consolidated).
 
-Exposes 1 tool:
-  • manage_software — CRUD + list + list_licenses
+Each tool is exposed as a read_/manage_ pair so MCP clients can grant
+read-only or read-write access independently.
+
+Tools:
+  - read_software / manage_software — list/get/list_licenses vs create/update
 """
 from typing import Any, Dict, List, Optional
 
 from ..http_client import api_get, api_post, api_put, handle_error, parse_link_header
+from ._split import reject_unless_in
 
 
 def register_software_tools(mcp) -> None:
     """Register software-related tools on *mcp*."""
 
-    @mcp.tool()
-    async def manage_software(
+    # ------------------------------------------------------------------ #
+    #  software — read/manage split                                       #
+    # ------------------------------------------------------------------ #
+    _READ_SOFTWARE = {"list", "get", "list_licenses"}
+    _WRITE_SOFTWARE = {"create", "update"}
+
+    async def _software_handler(
         action: str,
-        software_id: Optional[int] = None,
-        # create / update fields
-        name: Optional[str] = None,
-        description: Optional[str] = None,
-        application_type: Optional[str] = None,
-        status: Optional[str] = None,
-        publisher_id: Optional[int] = None,
-        managed_by_id: Optional[int] = None,
-        notes: Optional[str] = None,
-        category: Optional[str] = None,
-        sources: Optional[List[Dict[str, Any]]] = None,
-        custom_fields: Optional[Dict[str, Any]] = None,
-        # list / list_licenses
-        workspace_id: Optional[int] = None,
-        page: int = 1,
-        per_page: int = 30,
+        software_id: Optional[int],
+        name: Optional[str],
+        description: Optional[str],
+        application_type: Optional[str],
+        status: Optional[str],
+        publisher_id: Optional[int],
+        managed_by_id: Optional[int],
+        notes: Optional[str],
+        category: Optional[str],
+        sources: Optional[List[Dict[str, Any]]],
+        custom_fields: Optional[Dict[str, Any]],
+        workspace_id: Optional[int],
+        page: int,
+        per_page: int,
     ) -> Dict[str, Any]:
-        """Unified software operations.
-
-        Args:
-            action: One of 'create', 'update', 'get', 'list', 'list_licenses'
-            software_id: Software/application ID (get, update)
-            name: Software name (create — MANDATORY)
-            description: Software description
-            application_type: Type of application
-            status: Software status
-            publisher_id: Publisher ID
-            managed_by_id: ID of the agent managing this software
-            notes: Additional notes
-            category: Software category
-            sources: List of source dicts
-            custom_fields: Custom field key-value pairs
-            workspace_id: Workspace filter (list, list_licenses)
-            page: Page number (list, list_licenses)
-            per_page: Items per page 1-100 (list, list_licenses)
-        """
-        action = action.lower().strip()
-
         # ---------- list ----------
         if action == "list":
             params: Dict[str, Any] = {"page": page, "per_page": per_page}
@@ -139,7 +125,7 @@ def register_software_tools(mcp) -> None:
 
         # ---------- list_licenses ----------
         if action == "list_licenses":
-            params: Dict[str, Any] = {"page": page, "per_page": per_page}
+            params = {"page": page, "per_page": per_page}
             if workspace_id is not None:
                 params["workspace_id"] = workspace_id
             try:
@@ -158,4 +144,71 @@ def register_software_tools(mcp) -> None:
             except Exception as e:
                 return handle_error(e, "list software licenses")
 
-        return {"error": f"Unknown action '{action}'. Valid: create, update, get, list, list_licenses"}
+        return {"error": "unreachable"}
+
+    @mcp.tool()
+    async def read_software(
+        action: str,
+        software_id: Optional[int] = None,
+        workspace_id: Optional[int] = None,
+        page: int = 1,
+        per_page: int = 30,
+    ) -> Dict[str, Any]:
+        """Read Freshservice software / applications.
+
+        Args:
+            action: One of 'list', 'get', 'list_licenses'
+            software_id: Software/application ID (get)
+            workspace_id: Workspace filter (list, list_licenses)
+            page: Page number (list, list_licenses)
+            per_page: Items per page 1-100 (list, list_licenses)
+        """
+        action = action.lower().strip()
+        err = reject_unless_in(action, _READ_SOFTWARE, "read_software", "manage_software")
+        if err:
+            return err
+        return await _software_handler(
+            action, software_id, None, None, None, None, None, None, None, None,
+            None, None, workspace_id, page, per_page,
+        )
+
+    @mcp.tool()
+    async def manage_software(
+        action: str,
+        software_id: Optional[int] = None,
+        name: Optional[str] = None,
+        description: Optional[str] = None,
+        application_type: Optional[str] = None,
+        status: Optional[str] = None,
+        publisher_id: Optional[int] = None,
+        managed_by_id: Optional[int] = None,
+        notes: Optional[str] = None,
+        category: Optional[str] = None,
+        sources: Optional[List[Dict[str, Any]]] = None,
+        custom_fields: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """Write actions on Freshservice software / applications.
+
+        Args:
+            action: 'create', 'update'
+            software_id: Software/application ID (update)
+            name: Software name (create — MANDATORY)
+            description: Software description
+            application_type: Type of application
+            status: Software status
+            publisher_id: Publisher ID
+            managed_by_id: ID of the agent managing this software
+            notes: Additional notes
+            category: Software category
+            sources: List of source dicts
+            custom_fields: Custom field key-value pairs
+        """
+        action = action.lower().strip()
+        err = reject_unless_in(action, _WRITE_SOFTWARE, "manage_software", "read_software")
+        if err:
+            return err
+        return await _software_handler(
+            action, software_id, name, description, application_type, status,
+            publisher_id, managed_by_id, notes, category, sources, custom_fields,
+            workspace_id=None, page=1, per_page=30,
+        )

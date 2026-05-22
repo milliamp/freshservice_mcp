@@ -1,7 +1,10 @@
 """Freshservice MCP — Announcements tools.
 
-Exposes 1 tool:
-  - manage_announcement — CRUD + list
+Each tool is exposed as a read_/manage_ pair so MCP clients can grant
+read-only or read-write access independently.
+
+Tools:
+  - read_announcement / manage_announcement — list/get vs create/update/delete
 """
 from typing import Any, Dict, List, Optional
 
@@ -13,47 +16,33 @@ from ..http_client import (
     handle_error,
     parse_link_header,
 )
+from ._split import reject_unless_in
 
 
 def register_announcements_tools(mcp) -> None:
     """Register announcement-related tools on *mcp*."""
 
-    @mcp.tool()
-    async def manage_announcement(
+    # ------------------------------------------------------------------ #
+    #  announcement — read/manage split                                   #
+    # ------------------------------------------------------------------ #
+    _READ_ANNOUNCEMENT = {"list", "get"}
+    _WRITE_ANNOUNCEMENT = {"create", "update", "delete"}
+
+    async def _announcement_handler(
         action: str,
-        announcement_id: Optional[int] = None,
-        title: Optional[str] = None,
-        body_html: Optional[str] = None,
-        visible_from: Optional[str] = None,
-        visible_till: Optional[str] = None,
-        visibility: Optional[str] = None,
-        departments: Optional[List[int]] = None,
-        groups: Optional[List[int]] = None,
-        send_email: Optional[bool] = None,
-        additional_emails: Optional[List[str]] = None,
-        page: int = 1,
-        per_page: int = 30,
+        announcement_id: Optional[int],
+        title: Optional[str],
+        body_html: Optional[str],
+        visible_from: Optional[str],
+        visible_till: Optional[str],
+        visibility: Optional[str],
+        departments: Optional[List[int]],
+        groups: Optional[List[int]],
+        send_email: Optional[bool],
+        additional_emails: Optional[List[str]],
+        page: int,
+        per_page: int,
     ) -> Dict[str, Any]:
-        """Manage Freshservice announcements.
-
-        Args:
-            action: One of 'create', 'update', 'delete', 'get', 'list'
-            announcement_id: Required for get, update, delete
-            title: Announcement title (create - REQUIRED)
-            body_html: Announcement body in HTML (create - REQUIRED)
-            visible_from: ISO datetime when announcement becomes visible (create - REQUIRED)
-            visible_till: ISO datetime when announcement expires
-            visibility: One of 'everyone', 'agents_only', 'agents_and_groups'
-                        (create - REQUIRED)
-            departments: List of department IDs to target
-            groups: List of group IDs to target
-            send_email: Whether to send email notification (bool)
-            additional_emails: List of additional email addresses to notify
-            page: Page number (list)
-            per_page: Items per page 1-100 (list)
-        """
-        action = action.lower().strip()
-
         # ---------- list ----------
         if action == "list":
             params: Dict[str, Any] = {"page": page, "per_page": per_page}
@@ -150,4 +139,68 @@ def register_announcements_tools(mcp) -> None:
             except Exception as e:
                 return handle_error(e, "delete announcement")
 
-        return {"error": f"Unknown action '{action}'. Valid: create, update, delete, get, list"}
+        return {"error": "unreachable"}
+
+    @mcp.tool()
+    async def read_announcement(
+        action: str,
+        announcement_id: Optional[int] = None,
+        page: int = 1,
+        per_page: int = 30,
+    ) -> Dict[str, Any]:
+        """Read Freshservice announcements.
+
+        Args:
+            action: 'list', 'get'
+            announcement_id: Required for get
+            page: Page number (list)
+            per_page: Items per page 1-100 (list)
+        """
+        action = action.lower().strip()
+        err = reject_unless_in(action, _READ_ANNOUNCEMENT, "read_announcement", "manage_announcement")
+        if err:
+            return err
+        return await _announcement_handler(
+            action, announcement_id, None, None, None, None, None,
+            None, None, None, None, page, per_page,
+        )
+
+    @mcp.tool()
+    async def manage_announcement(
+        action: str,
+        announcement_id: Optional[int] = None,
+        title: Optional[str] = None,
+        body_html: Optional[str] = None,
+        visible_from: Optional[str] = None,
+        visible_till: Optional[str] = None,
+        visibility: Optional[str] = None,
+        departments: Optional[List[int]] = None,
+        groups: Optional[List[int]] = None,
+        send_email: Optional[bool] = None,
+        additional_emails: Optional[List[str]] = None,
+    ) -> Dict[str, Any]:
+        """Write actions on Freshservice announcements.
+
+        Args:
+            action: One of 'create', 'update', 'delete'
+            announcement_id: Required for update, delete
+            title: Announcement title (create - REQUIRED)
+            body_html: Announcement body in HTML (create - REQUIRED)
+            visible_from: ISO datetime when announcement becomes visible (create - REQUIRED)
+            visible_till: ISO datetime when announcement expires
+            visibility: One of 'everyone', 'agents_only', 'agents_and_groups'
+                        (create - REQUIRED)
+            departments: List of department IDs to target
+            groups: List of group IDs to target
+            send_email: Whether to send email notification (bool)
+            additional_emails: List of additional email addresses to notify
+        """
+        action = action.lower().strip()
+        err = reject_unless_in(action, _WRITE_ANNOUNCEMENT, "manage_announcement", "read_announcement")
+        if err:
+            return err
+        return await _announcement_handler(
+            action, announcement_id, title, body_html, visible_from, visible_till,
+            visibility, departments, groups, send_email, additional_emails,
+            page=1, per_page=30,
+        )

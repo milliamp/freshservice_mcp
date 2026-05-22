@@ -1,17 +1,23 @@
 """Freshservice MCP — Miscellaneous tools (consolidated).
 
-Exposes 9 tools:
-  - manage_canned_response    — list + get (responses & folders)
-  - manage_workspace          — list + get
-  - manage_agent_role         — list + get (read-only)
-  - manage_business_hour      — list + get (read-only)
-  - manage_sla_policy         — list + get (read-only)
-  - manage_alert              — list + get + delete
-  - manage_audit_log          — export
-  - manage_onboarding_request — list + get + create + get_tickets + get_fields
-  - manage_offboarding_request — list + get + create + get_fields
+Each tool is exposed as a read_/manage_ pair so MCP clients can grant
+read-only or read-write access independently. Tools that have no write
+actions are exposed only as read_*.
+
+Tools:
+  - read_canned_response       — list + get (responses & folders)
+  - read_workspace             — list + get
+  - read_agent_role            — list + get
+  - read_business_hour         — list + get
+  - read_sla_policy            — list + get
+  - read_alert  / manage_alert — list/get vs delete
+  - read_audit_log             — export
+  - read_onboarding_request /
+    manage_onboarding_request  — list/get/get_tickets/get_fields vs create
+  - read_offboarding_request /
+    manage_offboarding_request — list/get/get_fields vs create
 """
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 from ..http_client import (
     api_delete,
@@ -20,21 +26,24 @@ from ..http_client import (
     handle_error,
     parse_link_header,
 )
+from ._split import reject_unless_in
 
 
 def register_misc_tools(mcp) -> None:  # noqa: C901
     """Register miscellaneous tools on *mcp*."""
 
     # ------------------------------------------------------------------ #
-    #  manage_canned_response                                             #
+    #  canned_response — read only                                        #
     # ------------------------------------------------------------------ #
+    _READ_CANNED = {"list", "get", "list_folders", "get_folder"}
+
     @mcp.tool()
-    async def manage_canned_response(
+    async def read_canned_response(
         action: str,
         response_id: Optional[int] = None,
         folder_id: Optional[int] = None,
     ) -> Dict[str, Any]:
-        """Manage canned responses.
+        """Read canned responses and folders.
 
         Args:
             action: 'list', 'get', 'list_folders', 'get_folder'
@@ -42,6 +51,9 @@ def register_misc_tools(mcp) -> None:  # noqa: C901
             folder_id: Required for get_folder
         """
         action = action.lower().strip()
+        err = reject_unless_in(action, _READ_CANNED, "read_canned_response", "(no write counterpart)")
+        if err:
+            return err
 
         if action == "list":
             try:
@@ -79,23 +91,28 @@ def register_misc_tools(mcp) -> None:  # noqa: C901
             except Exception as e:
                 return handle_error(e, "get canned response folder")
 
-        return {"error": f"Unknown action '{action}'. Valid: list, get, list_folders, get_folder"}
+        return {"error": "unreachable"}
 
     # ------------------------------------------------------------------ #
-    #  manage_workspace                                                   #
+    #  workspace — read only                                              #
     # ------------------------------------------------------------------ #
+    _READ_WORKSPACE = {"list", "get"}
+
     @mcp.tool()
-    async def manage_workspace(
+    async def read_workspace(
         action: str,
         workspace_id: Optional[int] = None,
     ) -> Dict[str, Any]:
-        """Manage workspaces.
+        """Read workspaces.
 
         Args:
             action: 'list', 'get'
             workspace_id: Required for get
         """
         action = action.lower().strip()
+        err = reject_unless_in(action, _READ_WORKSPACE, "read_workspace", "(no write counterpart)")
+        if err:
+            return err
 
         if action == "list":
             try:
@@ -115,23 +132,28 @@ def register_misc_tools(mcp) -> None:  # noqa: C901
             except Exception as e:
                 return handle_error(e, "get workspace")
 
-        return {"error": f"Unknown action '{action}'. Valid: list, get"}
+        return {"error": "unreachable"}
 
     # ------------------------------------------------------------------ #
-    #  manage_agent_role                                                  #
+    #  agent_role — read only                                             #
     # ------------------------------------------------------------------ #
+    _READ_AGENT_ROLE = {"list", "get"}
+
     @mcp.tool()
-    async def manage_agent_role(
+    async def read_agent_role(
         action: str,
         role_id: Optional[int] = None,
     ) -> Dict[str, Any]:
-        """Manage Freshservice agent roles (read-only).
+        """Read Freshservice agent roles.
 
         Args:
             action: 'list', 'get'
             role_id: Required for get
         """
         action = action.lower().strip()
+        err = reject_unless_in(action, _READ_AGENT_ROLE, "read_agent_role", "(no write counterpart)")
+        if err:
+            return err
 
         if action == "list":
             try:
@@ -151,23 +173,28 @@ def register_misc_tools(mcp) -> None:  # noqa: C901
             except Exception as e:
                 return handle_error(e, "get role")
 
-        return {"error": f"Unknown action '{action}'. Valid: list, get"}
+        return {"error": "unreachable"}
 
     # ------------------------------------------------------------------ #
-    #  manage_business_hour                                               #
+    #  business_hour — read only                                          #
     # ------------------------------------------------------------------ #
+    _READ_BUSINESS_HOUR = {"list", "get"}
+
     @mcp.tool()
-    async def manage_business_hour(
+    async def read_business_hour(
         action: str,
         business_hour_id: Optional[int] = None,
     ) -> Dict[str, Any]:
-        """Manage Freshservice business hours configurations (read-only).
+        """Read Freshservice business hours configurations.
 
         Args:
             action: 'list', 'get'
             business_hour_id: Required for get
         """
         action = action.lower().strip()
+        err = reject_unless_in(action, _READ_BUSINESS_HOUR, "read_business_hour", "(no write counterpart)")
+        if err:
+            return err
 
         if action == "list":
             try:
@@ -187,23 +214,28 @@ def register_misc_tools(mcp) -> None:  # noqa: C901
             except Exception as e:
                 return handle_error(e, "get business hours")
 
-        return {"error": f"Unknown action '{action}'. Valid: list, get"}
+        return {"error": "unreachable"}
 
     # ------------------------------------------------------------------ #
-    #  manage_sla_policy                                                  #
+    #  sla_policy — read only                                             #
     # ------------------------------------------------------------------ #
+    _READ_SLA_POLICY = {"list", "get"}
+
     @mcp.tool()
-    async def manage_sla_policy(
+    async def read_sla_policy(
         action: str,
         sla_id: Optional[int] = None,
     ) -> Dict[str, Any]:
-        """Manage Freshservice SLA policies (read-only).
+        """Read Freshservice SLA policies.
 
         Args:
             action: 'list', 'get'
             sla_id: Required for get
         """
         action = action.lower().strip()
+        err = reject_unless_in(action, _READ_SLA_POLICY, "read_sla_policy", "(no write counterpart)")
+        if err:
+            return err
 
         if action == "list":
             try:
@@ -223,28 +255,20 @@ def register_misc_tools(mcp) -> None:  # noqa: C901
             except Exception as e:
                 return handle_error(e, "get SLA policy")
 
-        return {"error": f"Unknown action '{action}'. Valid: list, get"}
+        return {"error": "unreachable"}
 
     # ------------------------------------------------------------------ #
-    #  manage_alert                                                       #
+    #  alert — read/manage split                                          #
     # ------------------------------------------------------------------ #
-    @mcp.tool()
-    async def manage_alert(
+    _READ_ALERT = {"list", "get"}
+    _WRITE_ALERT = {"delete"}
+
+    async def _alert_handler(
         action: str,
-        alert_id: Optional[int] = None,
-        page: int = 1,
-        per_page: int = 30,
+        alert_id: Optional[int],
+        page: int,
+        per_page: int,
     ) -> Dict[str, Any]:
-        """Manage Freshservice alerts.
-
-        Args:
-            action: 'list', 'get', 'delete'
-            alert_id: Required for get, delete
-            page: Page number (list)
-            per_page: Items per page 1-100 (list)
-        """
-        action = action.lower().strip()
-
         if action == "list":
             params: Dict[str, Any] = {"page": page, "per_page": per_page}
             try:
@@ -284,13 +308,53 @@ def register_misc_tools(mcp) -> None:  # noqa: C901
             except Exception as e:
                 return handle_error(e, "delete alert")
 
-        return {"error": f"Unknown action '{action}'. Valid: list, get, delete"}
+        return {"error": "unreachable"}
+
+    @mcp.tool()
+    async def read_alert(
+        action: str,
+        alert_id: Optional[int] = None,
+        page: int = 1,
+        per_page: int = 30,
+    ) -> Dict[str, Any]:
+        """Read Freshservice alerts.
+
+        Args:
+            action: 'list', 'get'
+            alert_id: Required for get
+            page: Page number (list)
+            per_page: Items per page 1-100 (list)
+        """
+        action = action.lower().strip()
+        err = reject_unless_in(action, _READ_ALERT, "read_alert", "manage_alert")
+        if err:
+            return err
+        return await _alert_handler(action, alert_id, page, per_page)
+
+    @mcp.tool()
+    async def manage_alert(
+        action: str,
+        alert_id: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """Write actions on Freshservice alerts.
+
+        Args:
+            action: 'delete'
+            alert_id: Required
+        """
+        action = action.lower().strip()
+        err = reject_unless_in(action, _WRITE_ALERT, "manage_alert", "read_alert")
+        if err:
+            return err
+        return await _alert_handler(action, alert_id, page=1, per_page=30)
 
     # ------------------------------------------------------------------ #
-    #  manage_audit_log                                                   #
+    #  audit_log — read only (export is a read of historical data)        #
     # ------------------------------------------------------------------ #
+    _READ_AUDIT = {"export"}
+
     @mcp.tool()
-    async def manage_audit_log(
+    async def read_audit_log(
         action: str,
         since: Optional[str] = None,
         before: Optional[str] = None,
@@ -307,6 +371,9 @@ def register_misc_tools(mcp) -> None:  # noqa: C901
             actor: Filter by actor, e.g. {"id": 123, "type": "user"} (optional)
         """
         action = action.lower().strip()
+        err = reject_unless_in(action, _READ_AUDIT, "read_audit_log", "(no write counterpart)")
+        if err:
+            return err
 
         if action == "export":
             if not since or not before:
@@ -323,30 +390,21 @@ def register_misc_tools(mcp) -> None:  # noqa: C901
             except Exception as e:
                 return handle_error(e, "export audit log")
 
-        return {"error": f"Unknown action '{action}'. Valid: export"}
+        return {"error": "unreachable"}
 
     # ------------------------------------------------------------------ #
-    #  manage_onboarding_request                                          #
+    #  onboarding_request — read/manage split                             #
     # ------------------------------------------------------------------ #
-    @mcp.tool()
-    async def manage_onboarding_request(
+    _READ_ONBOARDING = {"list", "get", "get_tickets", "get_fields"}
+    _WRITE_ONBOARDING = {"create"}
+
+    async def _onboarding_handler(
         action: str,
-        onboarding_request_id: Optional[int] = None,
-        fields: Optional[Dict[str, Any]] = None,
-        page: int = 1,
-        per_page: int = 30,
+        onboarding_request_id: Optional[int],
+        fields: Optional[Dict[str, Any]],
+        page: int,
+        per_page: int,
     ) -> Dict[str, Any]:
-        """Manage Freshservice onboarding requests.
-
-        Args:
-            action: 'list', 'get', 'create', 'get_tickets', 'get_fields'
-            onboarding_request_id: Required for get, get_tickets
-            fields: Request field data dict (create)
-            page: Page number (list)
-            per_page: Items per page 1-100 (list)
-        """
-        action = action.lower().strip()
-
         if action == "get_fields":
             try:
                 resp = await api_get("onboarding_requests/form")
@@ -403,30 +461,59 @@ def register_misc_tools(mcp) -> None:  # noqa: C901
             except Exception as e:
                 return handle_error(e, "get onboarding request tickets")
 
-        return {"error": f"Unknown action '{action}'. Valid: list, get, create, get_tickets, get_fields"}
+        return {"error": "unreachable"}
 
-    # ------------------------------------------------------------------ #
-    #  manage_offboarding_request                                         #
-    # ------------------------------------------------------------------ #
     @mcp.tool()
-    async def manage_offboarding_request(
+    async def read_onboarding_request(
         action: str,
-        offboarding_request_id: Optional[int] = None,
-        fields: Optional[Dict[str, Any]] = None,
+        onboarding_request_id: Optional[int] = None,
         page: int = 1,
         per_page: int = 30,
     ) -> Dict[str, Any]:
-        """Manage Freshservice offboarding requests.
+        """Read Freshservice onboarding requests.
 
         Args:
-            action: 'list', 'get', 'create', 'get_fields'
-            offboarding_request_id: Required for get
-            fields: Request field data dict (create)
+            action: 'list', 'get', 'get_tickets', 'get_fields'
+            onboarding_request_id: Required for get, get_tickets
             page: Page number (list)
             per_page: Items per page 1-100 (list)
         """
         action = action.lower().strip()
+        err = reject_unless_in(action, _READ_ONBOARDING, "read_onboarding_request", "manage_onboarding_request")
+        if err:
+            return err
+        return await _onboarding_handler(action, onboarding_request_id, None, page, per_page)
 
+    @mcp.tool()
+    async def manage_onboarding_request(
+        action: str,
+        fields: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """Write actions on Freshservice onboarding requests.
+
+        Args:
+            action: 'create'
+            fields: Request field data dict (required for create)
+        """
+        action = action.lower().strip()
+        err = reject_unless_in(action, _WRITE_ONBOARDING, "manage_onboarding_request", "read_onboarding_request")
+        if err:
+            return err
+        return await _onboarding_handler(action, None, fields, page=1, per_page=30)
+
+    # ------------------------------------------------------------------ #
+    #  offboarding_request — read/manage split                            #
+    # ------------------------------------------------------------------ #
+    _READ_OFFBOARDING = {"list", "get", "get_fields"}
+    _WRITE_OFFBOARDING = {"create"}
+
+    async def _offboarding_handler(
+        action: str,
+        offboarding_request_id: Optional[int],
+        fields: Optional[Dict[str, Any]],
+        page: int,
+        per_page: int,
+    ) -> Dict[str, Any]:
         if action == "get_fields":
             try:
                 resp = await api_get("offboarding_requests/form")
@@ -473,4 +560,42 @@ def register_misc_tools(mcp) -> None:  # noqa: C901
             except Exception as e:
                 return handle_error(e, "create offboarding request")
 
-        return {"error": f"Unknown action '{action}'. Valid: list, get, create, get_fields"}
+        return {"error": "unreachable"}
+
+    @mcp.tool()
+    async def read_offboarding_request(
+        action: str,
+        offboarding_request_id: Optional[int] = None,
+        page: int = 1,
+        per_page: int = 30,
+    ) -> Dict[str, Any]:
+        """Read Freshservice offboarding requests.
+
+        Args:
+            action: 'list', 'get', 'get_fields'
+            offboarding_request_id: Required for get
+            page: Page number (list)
+            per_page: Items per page 1-100 (list)
+        """
+        action = action.lower().strip()
+        err = reject_unless_in(action, _READ_OFFBOARDING, "read_offboarding_request", "manage_offboarding_request")
+        if err:
+            return err
+        return await _offboarding_handler(action, offboarding_request_id, None, page, per_page)
+
+    @mcp.tool()
+    async def manage_offboarding_request(
+        action: str,
+        fields: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """Write actions on Freshservice offboarding requests.
+
+        Args:
+            action: 'create'
+            fields: Request field data dict (required for create)
+        """
+        action = action.lower().strip()
+        err = reject_unless_in(action, _WRITE_OFFBOARDING, "manage_offboarding_request", "read_offboarding_request")
+        if err:
+            return err
+        return await _offboarding_handler(action, None, fields, page=1, per_page=30)

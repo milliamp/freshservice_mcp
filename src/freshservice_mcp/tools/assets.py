@@ -1,9 +1,23 @@
 """Freshservice MCP — Assets tools (consolidated).
 
-Exposes 3 tools instead of the original 22:
-  • manage_asset           — CRUD + list + search + filter + delete + restore + move + get_types + create_type + get_type_fields
-  • manage_asset_details   — components, assignment history, requests, contracts
-  • manage_asset_relationship — CRUD + list + types + job status
+Each tool is exposed as a read_/manage_ pair so MCP clients can grant
+read-only or read-write access independently. Tools that have no write
+actions are exposed only as read_*.
+
+Tools:
+  • read_asset / manage_asset                       — list/get/search/filter/
+                                                       get_types/get_type/
+                                                       get_type_fields vs
+                                                       create/update/delete/
+                                                       delete_permanently/
+                                                       restore/move/create_type
+  • read_asset_details                              — components, assignment
+                                                       history, requests,
+                                                       contracts (read only)
+  • read_asset_relationship /
+    manage_asset_relationship                       — list_for_asset/list_all/
+                                                       get/get_types/job_status
+                                                       vs create/delete
 """
 import json
 from typing import Any, Dict, List, Optional
@@ -16,83 +30,57 @@ from ..http_client import (
     handle_error,
     parse_link_header,
 )
+from ._split import reject_unless_in
 
 
 def register_assets_tools(mcp) -> None:
     """Register asset-related tools on *mcp*."""
 
     # ------------------------------------------------------------------ #
-    #  manage_asset                                                       #
+    #  asset — read/manage split                                          #
     # ------------------------------------------------------------------ #
-    @mcp.tool()
-    async def manage_asset(
+    _READ_ASSET = {
+        "list", "get", "search", "filter",
+        "get_types", "get_type", "get_type_fields",
+    }
+    _WRITE_ASSET = {
+        "create", "update", "delete", "delete_permanently",
+        "restore", "move", "create_type",
+    }
+
+    async def _asset_handler(
         action: str,
         # identifiers
-        display_id: Optional[int] = None,
-        asset_type_id: Optional[int] = None,
+        display_id: Optional[int],
+        asset_type_id: Optional[int],
         # create / update fields
-        name: Optional[str] = None,
-        asset_tag: Optional[str] = None,
-        impact: Optional[str] = None,
-        usage_type: Optional[str] = None,
-        description: Optional[str] = None,
-        user_id: Optional[int] = None,
-        location_id: Optional[int] = None,
-        department_id: Optional[int] = None,
-        agent_id: Optional[int] = None,
-        group_id: Optional[int] = None,
-        assigned_on: Optional[str] = None,
-        workspace_id: Optional[int] = None,
-        type_fields: Optional[Dict[str, Any]] = None,
-        asset_fields: Optional[Dict[str, Any]] = None,
+        name: Optional[str],
+        asset_tag: Optional[str],
+        impact: Optional[str],
+        usage_type: Optional[str],
+        description: Optional[str],
+        user_id: Optional[int],
+        location_id: Optional[int],
+        department_id: Optional[int],
+        agent_id: Optional[int],
+        group_id: Optional[int],
+        assigned_on: Optional[str],
+        workspace_id: Optional[int],
+        type_fields: Optional[Dict[str, Any]],
+        asset_fields: Optional[Dict[str, Any]],
         # search / filter / list
-        search_query: Optional[str] = None,
-        filter_query: Optional[str] = None,
-        include: Optional[str] = None,
-        order_by: Optional[str] = None,
-        order_type: Optional[str] = None,
-        trashed: bool = False,
-        page: int = 1,
-        per_page: int = 30,
+        search_query: Optional[str],
+        filter_query: Optional[str],
+        include: Optional[str],
+        order_by: Optional[str],
+        order_type: Optional[str],
+        trashed: bool,
+        page: int,
+        per_page: int,
         # create_type fields
-        parent_asset_type_id: Optional[int] = None,
-        visible: Optional[bool] = True,
+        parent_asset_type_id: Optional[int],
+        visible: Optional[bool],
     ) -> Dict[str, Any]:
-        """Unified asset operations.
-
-        Args:
-            action: One of 'create', 'update', 'delete', 'delete_permanently',
-                    'restore', 'get', 'list', 'search', 'filter', 'move',
-                    'get_types', 'get_type', 'create_type', 'get_type_fields'
-            display_id: Asset display ID (get, update, delete, restore, move, details)
-            asset_type_id: Asset type ID (create — MANDATORY, get_type, get_type_fields)
-            name: Asset name (create — MANDATORY) or asset type name (create_type — MANDATORY)
-            asset_tag: Asset tag (e.g. 'ASSET-9')
-            impact: 'low', 'medium', or 'high' (default: 'low')
-            usage_type: 'permanent' or 'loaner' (default: 'permanent')
-            description: Asset or asset type description
-            user_id: User ID (Used By)
-            location_id: Location ID
-            department_id: Department ID
-            agent_id: Agent ID (Managed By)
-            group_id: Group ID (Managed By Group)
-            assigned_on: ISO date when assigned
-            workspace_id: Workspace ID (create, list, move)
-            type_fields: Asset-type-specific fields dict
-            asset_fields: Generic update fields dict (update — alternative to explicit params)
-            search_query: Search by name/tag/serial (search)
-            filter_query: Filter expression (filter)
-            include: Include extra data, e.g. 'type_fields' (list, get)
-            order_by: Sort field (list)
-            order_type: 'asc' or 'desc' (list)
-            trashed: Include trashed assets (list, search)
-            page: Page number
-            per_page: Items per page
-            parent_asset_type_id: Parent asset type ID (create_type)
-            visible: Whether the asset type is visible (create_type, default True)
-        """
-        action = action.lower().strip()
-
         # ---------- list ----------
         if action == "list":
             params: Dict[str, Any] = {"page": page, "per_page": per_page}
@@ -336,31 +324,153 @@ def register_assets_tools(mcp) -> None:
             except Exception as e:
                 return handle_error(e, "get asset type fields")
 
-        return {"error": f"Unknown action '{action}'. Valid: create, update, delete, delete_permanently, restore, get, list, search, filter, move, get_types, get_type, create_type, get_type_fields"}
+        return {"error": "unreachable"}
+
+    @mcp.tool()
+    async def read_asset(
+        action: str,
+        display_id: Optional[int] = None,
+        asset_type_id: Optional[int] = None,
+        search_query: Optional[str] = None,
+        filter_query: Optional[str] = None,
+        include: Optional[str] = None,
+        order_by: Optional[str] = None,
+        order_type: Optional[str] = None,
+        trashed: bool = False,
+        workspace_id: Optional[int] = None,
+        page: int = 1,
+        per_page: int = 30,
+    ) -> Dict[str, Any]:
+        """Read Freshservice assets and asset types.
+
+        Args:
+            action: One of 'list', 'get', 'search', 'filter',
+                    'get_types', 'get_type', 'get_type_fields'
+            display_id: Asset display ID (get)
+            asset_type_id: Asset type ID (get_type, get_type_fields)
+            search_query: Search by name/tag/serial (search)
+            filter_query: Filter expression (filter)
+            include: Include extra data, e.g. 'type_fields' (list, get)
+            order_by: Sort field (list)
+            order_type: 'asc' or 'desc' (list)
+            trashed: Include trashed assets (list, search)
+            workspace_id: Workspace ID (list)
+            page: Page number
+            per_page: Items per page
+        """
+        action = action.lower().strip()
+        err = reject_unless_in(action, _READ_ASSET, "read_asset", "manage_asset")
+        if err:
+            return err
+        return await _asset_handler(
+            action,
+            display_id=display_id, asset_type_id=asset_type_id,
+            name=None, asset_tag=None, impact=None, usage_type=None,
+            description=None, user_id=None, location_id=None,
+            department_id=None, agent_id=None, group_id=None,
+            assigned_on=None, workspace_id=workspace_id,
+            type_fields=None, asset_fields=None,
+            search_query=search_query, filter_query=filter_query,
+            include=include, order_by=order_by, order_type=order_type,
+            trashed=trashed, page=page, per_page=per_page,
+            parent_asset_type_id=None, visible=True,
+        )
+
+    @mcp.tool()
+    async def manage_asset(
+        action: str,
+        # identifiers
+        display_id: Optional[int] = None,
+        asset_type_id: Optional[int] = None,
+        # create / update fields
+        name: Optional[str] = None,
+        asset_tag: Optional[str] = None,
+        impact: Optional[str] = None,
+        usage_type: Optional[str] = None,
+        description: Optional[str] = None,
+        user_id: Optional[int] = None,
+        location_id: Optional[int] = None,
+        department_id: Optional[int] = None,
+        agent_id: Optional[int] = None,
+        group_id: Optional[int] = None,
+        assigned_on: Optional[str] = None,
+        workspace_id: Optional[int] = None,
+        type_fields: Optional[Dict[str, Any]] = None,
+        asset_fields: Optional[Dict[str, Any]] = None,
+        # create_type fields
+        parent_asset_type_id: Optional[int] = None,
+        visible: Optional[bool] = True,
+    ) -> Dict[str, Any]:
+        """Write actions on Freshservice assets and asset types.
+
+        Args:
+            action: One of 'create', 'update', 'delete', 'delete_permanently',
+                    'restore', 'move', 'create_type'
+            display_id: Asset display ID (update, delete, restore, move)
+            asset_type_id: Asset type ID (create — MANDATORY)
+            name: Asset name (create — MANDATORY) or asset type name (create_type — MANDATORY)
+            asset_tag: Asset tag (e.g. 'ASSET-9')
+            impact: 'low', 'medium', or 'high' (default: 'low')
+            usage_type: 'permanent' or 'loaner' (default: 'permanent')
+            description: Asset or asset type description
+            user_id: User ID (Used By)
+            location_id: Location ID
+            department_id: Department ID
+            agent_id: Agent ID (Managed By)
+            group_id: Group ID (Managed By Group)
+            assigned_on: ISO date when assigned
+            workspace_id: Workspace ID (create, move)
+            type_fields: Asset-type-specific fields dict
+            asset_fields: Generic update fields dict (update — alternative to explicit params)
+            parent_asset_type_id: Parent asset type ID (create_type)
+            visible: Whether the asset type is visible (create_type, default True)
+        """
+        action = action.lower().strip()
+        err = reject_unless_in(action, _WRITE_ASSET, "manage_asset", "read_asset")
+        if err:
+            return err
+        return await _asset_handler(
+            action,
+            display_id=display_id, asset_type_id=asset_type_id,
+            name=name, asset_tag=asset_tag, impact=impact,
+            usage_type=usage_type, description=description,
+            user_id=user_id, location_id=location_id,
+            department_id=department_id, agent_id=agent_id,
+            group_id=group_id, assigned_on=assigned_on,
+            workspace_id=workspace_id, type_fields=type_fields,
+            asset_fields=asset_fields,
+            search_query=None, filter_query=None, include=None,
+            order_by=None, order_type=None, trashed=False,
+            page=1, per_page=30,
+            parent_asset_type_id=parent_asset_type_id, visible=visible,
+        )
 
     # ------------------------------------------------------------------ #
-    #  manage_asset_details                                               #
+    #  asset_details — read only                                          #
     # ------------------------------------------------------------------ #
+    _READ_ASSET_DETAILS = {"components", "assignment_history", "requests", "contracts"}
+
     @mcp.tool()
-    async def manage_asset_details(
+    async def read_asset_details(
         action: str,
         display_id: int,
     ) -> Dict[str, Any]:
-        """Retrieve asset sub-resources.
+        """Retrieve asset sub-resources (read only).
 
         Args:
             action: 'components', 'assignment_history', 'requests', 'contracts'
             display_id: The asset display ID
         """
         action = action.lower().strip()
+        err = reject_unless_in(action, _READ_ASSET_DETAILS, "read_asset_details", "(no write counterpart)")
+        if err:
+            return err
         endpoints = {
             "components": "components",
             "assignment_history": "assignment-history",
             "requests": "requests",
             "contracts": "contracts",
         }
-        if action not in endpoints:
-            return {"error": f"Unknown action '{action}'. Valid: {', '.join(endpoints)}"}
         try:
             resp = await api_get(f"assets/{display_id}/{endpoints[action]}")
             resp.raise_for_status()
@@ -369,36 +479,21 @@ def register_assets_tools(mcp) -> None:
             return handle_error(e, f"get asset {action}")
 
     # ------------------------------------------------------------------ #
-    #  manage_asset_relationship                                          #
+    #  asset_relationship — read/manage split                             #
     # ------------------------------------------------------------------ #
-    @mcp.tool()
-    async def manage_asset_relationship(
+    _READ_ASSET_RELATIONSHIP = {"list_for_asset", "list_all", "get", "get_types", "job_status"}
+    _WRITE_ASSET_RELATIONSHIP = {"create", "delete"}
+
+    async def _asset_relationship_handler(
         action: str,
-        display_id: Optional[int] = None,
-        relationship_id: Optional[int] = None,
-        relationship_ids: Optional[List[int]] = None,
-        relationships: Optional[List[Dict[str, Any]]] = None,
-        job_id: Optional[str] = None,
-        page: int = 1,
-        per_page: int = 30,
+        display_id: Optional[int],
+        relationship_id: Optional[int],
+        relationship_ids: Optional[List[int]],
+        relationships: Optional[List[Dict[str, Any]]],
+        job_id: Optional[str],
+        page: int,
+        per_page: int,
     ) -> Dict[str, Any]:
-        """Manage asset relationships.
-
-        Args:
-            action: 'list_for_asset', 'list_all', 'get', 'create', 'delete',
-                    'get_types', 'job_status'
-            display_id: Asset display ID (list_for_asset)
-            relationship_id: Relationship ID (get)
-            relationship_ids: List of rel IDs to delete (delete)
-            relationships: List of relationship dicts for bulk create (create).
-                Each dict: {relationship_type_id, primary_id, primary_type,
-                            secondary_id, secondary_type}
-            job_id: Job ID returned by async operations (job_status)
-            page: Page number (list_all)
-            per_page: Items per page (list_all)
-        """
-        action = action.lower().strip()
-
         if action == "list_for_asset":
             if not display_id:
                 return {"error": "display_id required for list_for_asset"}
@@ -491,4 +586,60 @@ def register_assets_tools(mcp) -> None:
             except Exception as e:
                 return handle_error(e, "get job status")
 
-        return {"error": f"Unknown action '{action}'. Valid: list_for_asset, list_all, get, create, delete, get_types, job_status"}
+        return {"error": "unreachable"}
+
+    @mcp.tool()
+    async def read_asset_relationship(
+        action: str,
+        display_id: Optional[int] = None,
+        relationship_id: Optional[int] = None,
+        job_id: Optional[str] = None,
+        page: int = 1,
+        per_page: int = 30,
+    ) -> Dict[str, Any]:
+        """Read asset relationships.
+
+        Args:
+            action: 'list_for_asset', 'list_all', 'get', 'get_types', 'job_status'
+            display_id: Asset display ID (list_for_asset)
+            relationship_id: Relationship ID (get)
+            job_id: Job ID returned by async operations (job_status)
+            page: Page number (list_all)
+            per_page: Items per page (list_all)
+        """
+        action = action.lower().strip()
+        err = reject_unless_in(action, _READ_ASSET_RELATIONSHIP, "read_asset_relationship", "manage_asset_relationship")
+        if err:
+            return err
+        return await _asset_relationship_handler(
+            action,
+            display_id=display_id, relationship_id=relationship_id,
+            relationship_ids=None, relationships=None,
+            job_id=job_id, page=page, per_page=per_page,
+        )
+
+    @mcp.tool()
+    async def manage_asset_relationship(
+        action: str,
+        relationship_ids: Optional[List[int]] = None,
+        relationships: Optional[List[Dict[str, Any]]] = None,
+    ) -> Dict[str, Any]:
+        """Write actions on asset relationships.
+
+        Args:
+            action: 'create', 'delete'
+            relationship_ids: List of rel IDs to delete (delete)
+            relationships: List of relationship dicts for bulk create (create).
+                Each dict: {relationship_type_id, primary_id, primary_type,
+                            secondary_id, secondary_type}
+        """
+        action = action.lower().strip()
+        err = reject_unless_in(action, _WRITE_ASSET_RELATIONSHIP, "manage_asset_relationship", "read_asset_relationship")
+        if err:
+            return err
+        return await _asset_relationship_handler(
+            action,
+            display_id=None, relationship_id=None,
+            relationship_ids=relationship_ids, relationships=relationships,
+            job_id=None, page=1, per_page=30,
+        )

@@ -1,24 +1,32 @@
 """Freshservice MCP — Problem Management tools.
 
-Exposes 4 tools:
-  • manage_problem           — CRUD + list/filter/close/restore problems
-  • manage_problem_note      — CRUD notes on a problem
-  • manage_problem_task      — CRUD tasks on a problem
-  • manage_problem_time_entry — CRUD time entries on a problem
+Each consolidated tool is exposed as a read_/manage_ pair so MCP clients
+can grant read-only or read-write access independently.
+
+Tools:
+  • read_problem / manage_problem                    — list/get/filter/get_fields vs create/update/delete/close/restore
+  • read_problem_note / manage_problem_note          — list/get vs create/update/delete
+  • read_problem_task / manage_problem_task          — list/get vs create/update/delete
+  • read_problem_time_entry / manage_problem_time_entry — list/get vs create/update/delete
 """
 from typing import Any, Dict, List, Optional
 
 from ..http_client import api_delete, api_get, api_post, api_put, handle_error
+from ._split import reject_unless_in
 
 
-def register_problem_tools(mcp) -> None:
+def register_problem_tools(mcp) -> None:  # noqa: C901
     """Register problem management tools on *mcp*."""
 
-    @mcp.tool()
-    async def manage_problem(
+    # ------------------------------------------------------------------ #
+    #  problem — read/manage split                                        #
+    # ------------------------------------------------------------------ #
+    _READ_PROBLEM = {"list", "get", "filter", "get_fields"}
+    _WRITE_PROBLEM = {"create", "update", "delete", "close", "restore"}
+
+    async def _problem_handler(
         action: str,
         problem_id: Optional[int] = None,
-        # core fields
         requester_id: Optional[int] = None,
         subject: Optional[str] = None,
         description: Optional[str] = None,
@@ -26,7 +34,6 @@ def register_problem_tools(mcp) -> None:
         status: Optional[int] = None,
         impact: Optional[int] = None,
         due_by: Optional[str] = None,
-        # optional fields
         agent_id: Optional[int] = None,
         group_id: Optional[int] = None,
         department_id: Optional[int] = None,
@@ -37,38 +44,10 @@ def register_problem_tools(mcp) -> None:
         assets: Optional[List[Dict[str, Any]]] = None,
         analysis_fields: Optional[Dict[str, Any]] = None,
         custom_fields: Optional[Dict[str, Any]] = None,
-        # filter / pagination
         query: Optional[str] = None,
         page: int = 1,
         per_page: int = 30,
     ) -> Dict[str, Any]:
-        """Manage Freshservice problems.
-
-        Args:
-            action: One of 'list', 'get', 'create', 'update', 'delete',
-                    'filter', 'close', 'restore', 'get_fields'.
-            problem_id: Problem ID (required for get/update/delete/close/restore).
-            requester_id: Requester user ID (required for create).
-            subject: Problem subject (required for create).
-            description: HTML description (required for create).
-            priority: 1=Low, 2=Medium, 3=High, 4=Urgent (required for create).
-            status: 1=Open, 2=Change Requested, 3=Closed (required for create).
-            impact: 1=Low, 2=Medium, 3=High (required for create).
-            due_by: ISO datetime due date (required for create).
-            agent_id: Assigned agent ID.
-            group_id: Assigned group ID.
-            department_id: Department ID.
-            known_error: Mark as known error (boolean).
-            category/sub_category/item_category: Problem categorization.
-            assets: List of associated assets [{"display_id": N}].
-            analysis_fields: Analysis fields dict (problem_cause, symptom, impact).
-            custom_fields: Custom fields dict.
-            query: Filter query for 'filter' action
-                   (e.g. "priority:3 AND status:1").
-            page/per_page: Pagination.
-        """
-        action = action.lower().strip()
-
         if action == "list":
             try:
                 resp = await api_get("problems", params={"page": page, "per_page": per_page})
@@ -196,29 +175,120 @@ def register_problem_tools(mcp) -> None:
             except Exception as e:
                 return handle_error(e, "get problem fields")
 
-        return {
-            "error": f"Unknown action '{action}'. Valid: list, get, create, update, delete, "
-            "filter, close, restore, get_fields"
-        }
-
-    # ── Problem Notes ──
+        return {"error": "unreachable"}
 
     @mcp.tool()
-    async def manage_problem_note(
+    async def read_problem(
+        action: str,
+        problem_id: Optional[int] = None,
+        query: Optional[str] = None,
+        page: int = 1,
+        per_page: int = 30,
+    ) -> Dict[str, Any]:
+        """Read Freshservice problems.
+
+        Args:
+            action: 'list', 'get', 'filter', 'get_fields'
+            problem_id: Required for get
+            query: Filter query for 'filter' action (e.g. "priority:3 AND status:1")
+            page: Page number
+            per_page: Items per page 1-100
+        """
+        action = action.lower().strip()
+        err = reject_unless_in(action, _READ_PROBLEM, "read_problem", "manage_problem")
+        if err:
+            return err
+        return await _problem_handler(
+            action,
+            problem_id=problem_id,
+            query=query,
+            page=page,
+            per_page=per_page,
+        )
+
+    @mcp.tool()
+    async def manage_problem(
+        action: str,
+        problem_id: Optional[int] = None,
+        # core fields
+        requester_id: Optional[int] = None,
+        subject: Optional[str] = None,
+        description: Optional[str] = None,
+        priority: Optional[int] = None,
+        status: Optional[int] = None,
+        impact: Optional[int] = None,
+        due_by: Optional[str] = None,
+        # optional fields
+        agent_id: Optional[int] = None,
+        group_id: Optional[int] = None,
+        department_id: Optional[int] = None,
+        known_error: Optional[bool] = None,
+        category: Optional[str] = None,
+        sub_category: Optional[str] = None,
+        item_category: Optional[str] = None,
+        assets: Optional[List[Dict[str, Any]]] = None,
+        analysis_fields: Optional[Dict[str, Any]] = None,
+        custom_fields: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """Write actions on Freshservice problems.
+
+        Args:
+            action: 'create', 'update', 'delete', 'close', 'restore'
+            problem_id: Required for update/delete/close/restore
+            requester_id: Requester user ID (required for create)
+            subject: Problem subject (required for create)
+            description: HTML description (required for create)
+            priority: 1=Low, 2=Medium, 3=High, 4=Urgent (required for create)
+            status: 1=Open, 2=Change Requested, 3=Closed (required for create)
+            impact: 1=Low, 2=Medium, 3=High (required for create)
+            due_by: ISO datetime due date (required for create)
+            agent_id: Assigned agent ID
+            group_id: Assigned group ID
+            department_id: Department ID
+            known_error: Mark as known error (boolean)
+            category/sub_category/item_category: Problem categorization
+            assets: List of associated assets [{"display_id": N}]
+            analysis_fields: Analysis fields dict (problem_cause, symptom, impact)
+            custom_fields: Custom fields dict
+        """
+        action = action.lower().strip()
+        err = reject_unless_in(action, _WRITE_PROBLEM, "manage_problem", "read_problem")
+        if err:
+            return err
+        return await _problem_handler(
+            action,
+            problem_id=problem_id,
+            requester_id=requester_id,
+            subject=subject,
+            description=description,
+            priority=priority,
+            status=status,
+            impact=impact,
+            due_by=due_by,
+            agent_id=agent_id,
+            group_id=group_id,
+            department_id=department_id,
+            known_error=known_error,
+            category=category,
+            sub_category=sub_category,
+            item_category=item_category,
+            assets=assets,
+            analysis_fields=analysis_fields,
+            custom_fields=custom_fields,
+        )
+
+    # ------------------------------------------------------------------ #
+    #  problem_note — read/manage split                                   #
+    # ------------------------------------------------------------------ #
+    _READ_PROBLEM_NOTE = {"list", "get"}
+    _WRITE_PROBLEM_NOTE = {"create", "update", "delete"}
+
+    async def _problem_note_handler(
         action: str,
         problem_id: int,
         note_id: Optional[int] = None,
         body: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Manage notes on a Freshservice problem.
-
-        Args:
-            action: One of 'list', 'get', 'create', 'update', 'delete'.
-            problem_id: Problem ID (always required).
-            note_id: Note ID (required for get/update/delete).
-            body: Note body HTML (required for create/update).
-        """
-        action = action.lower().strip()
         base = f"problems/{problem_id}/notes"
 
         if action == "list":
@@ -271,16 +341,58 @@ def register_problem_tools(mcp) -> None:
             except Exception as e:
                 return handle_error(e, "delete problem note")
 
-        return {"error": f"Unknown action '{action}'. Valid: list, get, create, update, delete"}
-
-    # ── Problem Tasks ──
+        return {"error": "unreachable"}
 
     @mcp.tool()
-    async def manage_problem_task(
+    async def read_problem_note(
+        action: str,
+        problem_id: int,
+        note_id: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """Read notes on a Freshservice problem.
+
+        Args:
+            action: 'list', 'get'
+            problem_id: Problem ID (always required)
+            note_id: Note ID (required for get)
+        """
+        action = action.lower().strip()
+        err = reject_unless_in(action, _READ_PROBLEM_NOTE, "read_problem_note", "manage_problem_note")
+        if err:
+            return err
+        return await _problem_note_handler(action, problem_id, note_id=note_id)
+
+    @mcp.tool()
+    async def manage_problem_note(
+        action: str,
+        problem_id: int,
+        note_id: Optional[int] = None,
+        body: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Write actions on Freshservice problem notes.
+
+        Args:
+            action: 'create', 'update', 'delete'
+            problem_id: Problem ID (always required)
+            note_id: Note ID (required for update/delete)
+            body: Note body HTML (required for create/update)
+        """
+        action = action.lower().strip()
+        err = reject_unless_in(action, _WRITE_PROBLEM_NOTE, "manage_problem_note", "read_problem_note")
+        if err:
+            return err
+        return await _problem_note_handler(action, problem_id, note_id=note_id, body=body)
+
+    # ------------------------------------------------------------------ #
+    #  problem_task — read/manage split                                   #
+    # ------------------------------------------------------------------ #
+    _READ_PROBLEM_TASK = {"list", "get"}
+    _WRITE_PROBLEM_TASK = {"create", "update", "delete"}
+
+    async def _problem_task_handler(
         action: str,
         problem_id: int,
         task_id: Optional[int] = None,
-        # task fields
         title: Optional[str] = None,
         description: Optional[str] = None,
         status: Optional[int] = None,
@@ -288,20 +400,6 @@ def register_problem_tools(mcp) -> None:
         notify_before: Optional[int] = None,
         group_id: Optional[int] = None,
     ) -> Dict[str, Any]:
-        """Manage tasks on a Freshservice problem.
-
-        Args:
-            action: One of 'list', 'get', 'create', 'update', 'delete'.
-            problem_id: Problem ID (always required).
-            task_id: Task ID (required for get/update/delete).
-            title: Task title (required for create).
-            description: Task description.
-            status: 1=Open, 2=In Progress, 3=Completed.
-            due_date: ISO datetime due date.
-            notify_before: Hours to notify before due date.
-            group_id: Assigned group ID.
-        """
-        action = action.lower().strip()
         base = f"problems/{problem_id}/tasks"
 
         if action == "list":
@@ -366,16 +464,78 @@ def register_problem_tools(mcp) -> None:
             except Exception as e:
                 return handle_error(e, "delete problem task")
 
-        return {"error": f"Unknown action '{action}'. Valid: list, get, create, update, delete"}
-
-    # ── Problem Time Entries ──
+        return {"error": "unreachable"}
 
     @mcp.tool()
-    async def manage_problem_time_entry(
+    async def read_problem_task(
+        action: str,
+        problem_id: int,
+        task_id: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """Read tasks on a Freshservice problem.
+
+        Args:
+            action: 'list', 'get'
+            problem_id: Problem ID (always required)
+            task_id: Task ID (required for get)
+        """
+        action = action.lower().strip()
+        err = reject_unless_in(action, _READ_PROBLEM_TASK, "read_problem_task", "manage_problem_task")
+        if err:
+            return err
+        return await _problem_task_handler(action, problem_id, task_id=task_id)
+
+    @mcp.tool()
+    async def manage_problem_task(
+        action: str,
+        problem_id: int,
+        task_id: Optional[int] = None,
+        title: Optional[str] = None,
+        description: Optional[str] = None,
+        status: Optional[int] = None,
+        due_date: Optional[str] = None,
+        notify_before: Optional[int] = None,
+        group_id: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """Write actions on Freshservice problem tasks.
+
+        Args:
+            action: 'create', 'update', 'delete'
+            problem_id: Problem ID (always required)
+            task_id: Task ID (required for update/delete)
+            title: Task title (required for create)
+            description: Task description
+            status: 1=Open, 2=In Progress, 3=Completed
+            due_date: ISO datetime due date
+            notify_before: Hours to notify before due date
+            group_id: Assigned group ID
+        """
+        action = action.lower().strip()
+        err = reject_unless_in(action, _WRITE_PROBLEM_TASK, "manage_problem_task", "read_problem_task")
+        if err:
+            return err
+        return await _problem_task_handler(
+            action,
+            problem_id,
+            task_id=task_id,
+            title=title,
+            description=description,
+            status=status,
+            due_date=due_date,
+            notify_before=notify_before,
+            group_id=group_id,
+        )
+
+    # ------------------------------------------------------------------ #
+    #  problem_time_entry — read/manage split                             #
+    # ------------------------------------------------------------------ #
+    _READ_PROBLEM_TIME_ENTRY = {"list", "get"}
+    _WRITE_PROBLEM_TIME_ENTRY = {"create", "update", "delete"}
+
+    async def _problem_time_entry_handler(
         action: str,
         problem_id: int,
         time_entry_id: Optional[int] = None,
-        # time entry fields
         agent_id: Optional[int] = None,
         note: Optional[str] = None,
         time_spent: Optional[str] = None,
@@ -383,20 +543,6 @@ def register_problem_tools(mcp) -> None:
         task_id: Optional[int] = None,
         billable: Optional[bool] = None,
     ) -> Dict[str, Any]:
-        """Manage time entries on a Freshservice problem.
-
-        Args:
-            action: One of 'list', 'get', 'create', 'update', 'delete'.
-            problem_id: Problem ID (always required).
-            time_entry_id: Time entry ID (required for get/update/delete).
-            agent_id: Agent who performed the work.
-            note: Description of work performed.
-            time_spent: Time in "hh:mm" format (required for create).
-            executed_at: ISO datetime when work was performed.
-            task_id: Associated task ID.
-            billable: Whether the time is billable.
-        """
-        action = action.lower().strip()
         base = f"problems/{problem_id}/time_entries"
 
         if action == "list":
@@ -464,4 +610,64 @@ def register_problem_tools(mcp) -> None:
             except Exception as e:
                 return handle_error(e, "delete problem time entry")
 
-        return {"error": f"Unknown action '{action}'. Valid: list, get, create, update, delete"}
+        return {"error": "unreachable"}
+
+    @mcp.tool()
+    async def read_problem_time_entry(
+        action: str,
+        problem_id: int,
+        time_entry_id: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """Read time entries on a Freshservice problem.
+
+        Args:
+            action: 'list', 'get'
+            problem_id: Problem ID (always required)
+            time_entry_id: Time entry ID (required for get)
+        """
+        action = action.lower().strip()
+        err = reject_unless_in(action, _READ_PROBLEM_TIME_ENTRY, "read_problem_time_entry", "manage_problem_time_entry")
+        if err:
+            return err
+        return await _problem_time_entry_handler(action, problem_id, time_entry_id=time_entry_id)
+
+    @mcp.tool()
+    async def manage_problem_time_entry(
+        action: str,
+        problem_id: int,
+        time_entry_id: Optional[int] = None,
+        agent_id: Optional[int] = None,
+        note: Optional[str] = None,
+        time_spent: Optional[str] = None,
+        executed_at: Optional[str] = None,
+        task_id: Optional[int] = None,
+        billable: Optional[bool] = None,
+    ) -> Dict[str, Any]:
+        """Write actions on Freshservice problem time entries.
+
+        Args:
+            action: 'create', 'update', 'delete'
+            problem_id: Problem ID (always required)
+            time_entry_id: Time entry ID (required for update/delete)
+            agent_id: Agent who performed the work
+            note: Description of work performed
+            time_spent: Time in "hh:mm" format (required for create)
+            executed_at: ISO datetime when work was performed
+            task_id: Associated task ID
+            billable: Whether the time is billable
+        """
+        action = action.lower().strip()
+        err = reject_unless_in(action, _WRITE_PROBLEM_TIME_ENTRY, "manage_problem_time_entry", "read_problem_time_entry")
+        if err:
+            return err
+        return await _problem_time_entry_handler(
+            action,
+            problem_id,
+            time_entry_id=time_entry_id,
+            agent_id=agent_id,
+            note=note,
+            time_spent=time_spent,
+            executed_at=executed_at,
+            task_id=task_id,
+            billable=billable,
+        )

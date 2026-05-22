@@ -1,8 +1,12 @@
 """Freshservice MCP — Custom Objects tools.
 
-Exposes 1 tool:
-  - manage_custom_object — list_objects, get_object, list_records, get_record,
-                           create_record, update_record, delete_record
+Each tool is exposed as a read_/manage_ pair so MCP clients can grant
+read-only or read-write access independently.
+
+Tools:
+  - read_custom_object / manage_custom_object
+      Reads: list_objects, get_object, list_records, get_record
+      Writes: create_record, update_record, delete_record
 """
 from typing import Any, Dict, Optional
 
@@ -14,33 +18,26 @@ from ..http_client import (
     handle_error,
     parse_link_header,
 )
+from ._split import reject_unless_in
 
 
 def register_custom_objects_tools(mcp) -> None:
     """Register custom object tools on *mcp*."""
 
-    @mcp.tool()
-    async def manage_custom_object(
+    # ------------------------------------------------------------------ #
+    #  custom_object — read/manage split                                  #
+    # ------------------------------------------------------------------ #
+    _READ_CUSTOM_OBJECT = {"list_objects", "get_object", "list_records", "get_record"}
+    _WRITE_CUSTOM_OBJECT = {"create_record", "update_record", "delete_record"}
+
+    async def _custom_object_handler(
         action: str,
-        type_id: Optional[int] = None,
-        record_id: Optional[int] = None,
-        data: Optional[Dict[str, Any]] = None,
-        page: int = 1,
-        per_page: int = 30,
+        type_id: Optional[int],
+        record_id: Optional[int],
+        data: Optional[Dict[str, Any]],
+        page: int,
+        per_page: int,
     ) -> Dict[str, Any]:
-        """Manage Freshservice custom objects and their records.
-
-        Args:
-            action: One of 'list_objects', 'get_object', 'list_records', 'get_record',
-                    'create_record', 'update_record', 'delete_record'
-            type_id: Object type ID (required for all actions except list_objects)
-            record_id: Record ID (required for get_record, update_record, delete_record)
-            data: Record field data dict (create_record, update_record)
-            page: Page number (list_objects, list_records)
-            per_page: Items per page 1-100 (list_objects, list_records)
-        """
-        action = action.lower().strip()
-
         # ---------- list_objects ----------
         if action == "list_objects":
             params: Dict[str, Any] = {"page": page, "per_page": per_page}
@@ -141,4 +138,48 @@ def register_custom_objects_tools(mcp) -> None:
             except Exception as e:
                 return handle_error(e, "delete custom object record")
 
-        return {"error": f"Unknown action '{action}'. Valid: list_objects, get_object, list_records, get_record, create_record, update_record, delete_record"}
+        return {"error": "unreachable"}
+
+    @mcp.tool()
+    async def read_custom_object(
+        action: str,
+        type_id: Optional[int] = None,
+        record_id: Optional[int] = None,
+        page: int = 1,
+        per_page: int = 30,
+    ) -> Dict[str, Any]:
+        """Read Freshservice custom objects and their records.
+
+        Args:
+            action: One of 'list_objects', 'get_object', 'list_records', 'get_record'
+            type_id: Object type ID (required for get_object, list_records, get_record)
+            record_id: Record ID (required for get_record)
+            page: Page number (list_objects, list_records)
+            per_page: Items per page 1-100 (list_objects, list_records)
+        """
+        action = action.lower().strip()
+        err = reject_unless_in(action, _READ_CUSTOM_OBJECT, "read_custom_object", "manage_custom_object")
+        if err:
+            return err
+        return await _custom_object_handler(action, type_id, record_id, None, page, per_page)
+
+    @mcp.tool()
+    async def manage_custom_object(
+        action: str,
+        type_id: Optional[int] = None,
+        record_id: Optional[int] = None,
+        data: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """Write actions on Freshservice custom object records.
+
+        Args:
+            action: One of 'create_record', 'update_record', 'delete_record'
+            type_id: Object type ID (required for all actions)
+            record_id: Record ID (required for update_record, delete_record)
+            data: Record field data dict (create_record, update_record)
+        """
+        action = action.lower().strip()
+        err = reject_unless_in(action, _WRITE_CUSTOM_OBJECT, "manage_custom_object", "read_custom_object")
+        if err:
+            return err
+        return await _custom_object_handler(action, type_id, record_id, data, page=1, per_page=30)

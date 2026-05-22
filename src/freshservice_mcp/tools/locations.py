@@ -1,53 +1,44 @@
 """Freshservice MCP — Location tools.
 
-Exposes 1 tool:
-  • manage_location  — CRUD + list + filter locations
+Each tool is exposed as a read_/manage_ pair so MCP clients can grant
+read-only or read-write access independently.
+
+Tools:
+  - read_location / manage_location — list/get/filter vs create/update/delete
 """
 from typing import Any, Dict, Optional
 
 from ..http_client import api_delete, api_get, api_post, api_put, handle_error
+from ._split import reject_unless_in
 
 
 def register_locations_tools(mcp) -> None:
     """Register location tools on *mcp*."""
 
-    @mcp.tool()
-    async def manage_location(
+    # ------------------------------------------------------------------ #
+    #  location — read/manage split                                       #
+    # ------------------------------------------------------------------ #
+    _READ_LOCATION = {"list", "get", "filter"}
+    _WRITE_LOCATION = {"create", "update", "delete"}
+
+    async def _location_handler(
         action: str,
-        location_id: Optional[int] = None,
-        # creation / update fields
-        name: Optional[str] = None,
-        line1: Optional[str] = None,
-        line2: Optional[str] = None,
-        city: Optional[str] = None,
-        state: Optional[str] = None,
-        country: Optional[str] = None,
-        zipcode: Optional[str] = None,
-        contact_name: Optional[str] = None,
-        email: Optional[str] = None,
-        phone: Optional[str] = None,
-        parent_location_id: Optional[int] = None,
-        # filter / pagination
-        query: Optional[str] = None,
-        page: int = 1,
-        per_page: int = 30,
+        location_id: Optional[int],
+        name: Optional[str],
+        line1: Optional[str],
+        line2: Optional[str],
+        city: Optional[str],
+        state: Optional[str],
+        country: Optional[str],
+        zipcode: Optional[str],
+        contact_name: Optional[str],
+        email: Optional[str],
+        phone: Optional[str],
+        parent_location_id: Optional[int],
+        query: Optional[str],
+        page: int,
+        per_page: int,
     ) -> Dict[str, Any]:
-        """Manage Freshservice locations.
-
-        Args:
-            action: One of 'list', 'get', 'create', 'update', 'delete', 'filter'.
-            location_id: Location ID (required for get/update/delete).
-            name: Location name (required for create).
-            line1/line2/city/state/country/zipcode: Address fields.
-            contact_name: Contact person name.
-            email: Contact email.
-            phone: Contact phone.
-            parent_location_id: Parent location ID for hierarchical locations.
-            query: Filter query for 'filter' action (e.g. "name:'New York'").
-            page/per_page: Pagination.
-        """
-        action = action.lower().strip()
-
         if action == "list":
             try:
                 resp = await api_get("locations", params={"page": page, "per_page": per_page})
@@ -137,6 +128,67 @@ def register_locations_tools(mcp) -> None:
             except Exception as e:
                 return handle_error(e, "filter locations")
 
-        return {
-            "error": f"Unknown action '{action}'. Valid: list, get, create, update, delete, filter"
-        }
+        return {"error": "unreachable"}
+
+    @mcp.tool()
+    async def read_location(
+        action: str,
+        location_id: Optional[int] = None,
+        query: Optional[str] = None,
+        page: int = 1,
+        per_page: int = 30,
+    ) -> Dict[str, Any]:
+        """Read Freshservice locations.
+
+        Args:
+            action: One of 'list', 'get', 'filter'.
+            location_id: Location ID (required for get).
+            query: Filter query for 'filter' action (e.g. "name:'New York'").
+            page/per_page: Pagination.
+        """
+        action = action.lower().strip()
+        err = reject_unless_in(action, _READ_LOCATION, "read_location", "manage_location")
+        if err:
+            return err
+        return await _location_handler(
+            action, location_id, None, None, None, None, None, None, None,
+            None, None, None, None, query, page, per_page,
+        )
+
+    @mcp.tool()
+    async def manage_location(
+        action: str,
+        location_id: Optional[int] = None,
+        name: Optional[str] = None,
+        line1: Optional[str] = None,
+        line2: Optional[str] = None,
+        city: Optional[str] = None,
+        state: Optional[str] = None,
+        country: Optional[str] = None,
+        zipcode: Optional[str] = None,
+        contact_name: Optional[str] = None,
+        email: Optional[str] = None,
+        phone: Optional[str] = None,
+        parent_location_id: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """Write actions on Freshservice locations.
+
+        Args:
+            action: One of 'create', 'update', 'delete'.
+            location_id: Location ID (required for update, delete).
+            name: Location name (required for create).
+            line1/line2/city/state/country/zipcode: Address fields.
+            contact_name: Contact person name.
+            email: Contact email.
+            phone: Contact phone.
+            parent_location_id: Parent location ID for hierarchical locations.
+        """
+        action = action.lower().strip()
+        err = reject_unless_in(action, _WRITE_LOCATION, "manage_location", "read_location")
+        if err:
+            return err
+        return await _location_handler(
+            action, location_id, name, line1, line2, city, state, country, zipcode,
+            contact_name, email, phone, parent_location_id, query=None,
+            page=1, per_page=30,
+        )

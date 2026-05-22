@@ -1,10 +1,19 @@
 """Freshservice MCP — Project Management tools (NewGen).
 
-Exposes 2 tools:
-  • manage_project      — CRUD + list/archive/restore + fields/templates/
-                          members/memberships/associations/versions/sprints
-  • manage_project_task — CRUD + list/filter + task-types/statuses/priorities/
-                          notes/associations
+Each tool is exposed as a read_/manage_ pair so MCP clients can grant
+read-only or read-write access independently.
+
+Tools:
+  • read_project / manage_project           — list/get/get_fields/get_templates/
+                                               get_memberships/get_associations/
+                                               get_versions/get_sprints vs CRUD +
+                                               archive/restore/add_members/
+                                               create_association/delete_association
+  • read_project_task / manage_project_task — list/filter/get/get_task_types/
+                                               get_task_type_fields/get_task_statuses/
+                                               get_task_priorities/list_notes/
+                                               get_associations vs CRUD + note
+                                               CRUD + association CRUD
 """
 from typing import Any, Dict, List, Optional, Union
 
@@ -14,6 +23,7 @@ from ..http_client import (
     api_delete, api_get, api_post, api_put,
     get_auth_headers, handle_error,
 )
+from ._split import reject_unless_in
 
 # Base path for NewGen project management
 _PM = "pm/projects"
@@ -29,78 +39,45 @@ def register_project_tools(mcp) -> None:  # noqa: C901
     """Register project management tools on *mcp*."""
 
     # ------------------------------------------------------------------ #
-    #  manage_project                                                     #
+    #  project — read/manage split                                        #
     # ------------------------------------------------------------------ #
-    @mcp.tool()
-    async def manage_project(
+    _READ_PROJECT = {
+        "list", "get", "get_fields", "get_templates", "get_memberships",
+        "get_associations", "get_versions", "get_sprints",
+    }
+    _WRITE_PROJECT = {
+        "create", "update", "delete", "archive", "restore", "add_members",
+        "create_association", "delete_association",
+    }
+
+    async def _project_handler(
         action: str,
-        project_id: Optional[int] = None,
+        project_id: Optional[int],
         # core fields (create / update)
-        name: Optional[str] = None,
-        description: Optional[str] = None,
-        key: Optional[str] = None,
-        project_type: Optional[int] = None,
-        status_id: Optional[int] = None,
-        priority_id: Optional[int] = None,
-        manager_id: Optional[int] = None,
-        start_date: Optional[str] = None,
-        end_date: Optional[str] = None,
-        visibility: Optional[int] = None,
-        sprint_duration: Optional[int] = None,
-        custom_fields: Optional[Dict[str, Any]] = None,
-        project_template_id: Optional[int] = None,
+        name: Optional[str],
+        description: Optional[str],
+        key: Optional[str],
+        project_type: Optional[int],
+        status_id: Optional[int],
+        priority_id: Optional[int],
+        manager_id: Optional[int],
+        start_date: Optional[str],
+        end_date: Optional[str],
+        visibility: Optional[int],
+        sprint_duration: Optional[int],
+        custom_fields: Optional[Dict[str, Any]],
+        project_template_id: Optional[int],
         # members (add_members)
-        members: Optional[List[Dict[str, Any]]] = None,
-        # associations (create_association / view_associations / delete_association)
-        module_name: Optional[str] = None,
-        ids: Optional[List[int]] = None,
-        association_id: Optional[int] = None,
+        members: Optional[List[Dict[str, Any]]],
+        # associations
+        module_name: Optional[str],
+        ids: Optional[List[int]],
+        association_id: Optional[int],
         # list / filter
-        filter: Optional[str] = None,
-        page: int = 1,
-        per_page: int = 30,
+        filter: Optional[str],
+        page: int,
+        per_page: int,
     ) -> Dict[str, Any]:
-        """Manage Freshservice Projects (NewGen).
-
-        Projects let you plan, prioritize, manage, and track work within
-        the service desk. You can associate tickets, changes, problems,
-        and assets to projects.
-
-        Args:
-            action: One of 'create', 'update', 'get', 'list', 'delete',
-                    'archive', 'restore', 'get_fields', 'get_templates',
-                    'add_members', 'get_memberships',
-                    'create_association', 'get_associations', 'delete_association',
-                    'get_versions', 'get_sprints'.
-            project_id: Project ID (required for most actions except create,
-                list, get_fields, get_templates).
-            name: Project name (create — MANDATORY, max 255 chars).
-            description: Project description (HTML or plain text).
-            key: Project key — starts with letter, letters+numbers, max 10 chars.
-                Auto-generated from name if omitted on create.
-            project_type: 0=Software, 1=Business (create — MANDATORY).
-            status_id: 1=Yet to start, 2=In Progress, 3=Completed.
-            priority_id: 1=Low, 2=Medium, 3=High, 4=Urgent.
-            manager_id: User ID of the project manager.
-            start_date: Start date (yyyy-mm-dd).
-            end_date: End date (yyyy-mm-dd).
-            visibility: 0=Private, 1=Public (default 1).
-            sprint_duration: Sprint duration in days (default 14).
-            custom_fields: Custom fields dict.
-            project_template_id: Template ID (create only).
-            members: List of members to add (add_members).
-                Format: [{"email": "user@example.com", "role": 1}]
-                role: 1 or 2 (project admin vs member).
-            module_name: Association module — 'tickets', 'problems',
-                'changes', or 'assets' (create/get/delete_association).
-            ids: List of IDs to associate (create_association).
-            association_id: Entity ID to dissociate (delete_association).
-            filter: Filter for list — 'completed', 'incomplete', 'archived',
-                'open', 'in_progress'. Default shows open + completed.
-            page/per_page: Pagination (list, max 100 per page).
-        """
-        action = action.lower().strip()
-
         # ---------- list ----------
         if action == "list":
             params: Dict[str, Any] = {"page": page, "per_page": per_page}
@@ -336,92 +313,160 @@ def register_project_tools(mcp) -> None:  # noqa: C901
             except Exception as e:
                 return handle_error(e, "get project sprints")
 
-        return {
-            "error": f"Unknown action '{action}'. Valid: create, update, get, list, "
-            "delete, archive, restore, get_fields, get_templates, add_members, "
-            "get_memberships, create_association, get_associations, "
-            "delete_association, get_versions, get_sprints"
-        }
+        return {"error": "unreachable"}
 
-    # ------------------------------------------------------------------ #
-    #  manage_project_task                                                #
-    # ------------------------------------------------------------------ #
     @mcp.tool()
-    async def manage_project_task(
+    async def read_project(
         action: str,
         project_id: Optional[int] = None,
-        task_id: Optional[int] = None,
-        # core fields (create / update)
-        title: Optional[str] = None,
-        description: Optional[str] = None,
-        type_id: Optional[int] = None,
-        status_id: Optional[int] = None,
-        priority_id: Optional[int] = None,
-        assignee_id: Optional[int] = None,
-        reporter_id: Optional[int] = None,
-        parent_id: Optional[int] = None,
-        planned_start_date: Optional[str] = None,
-        planned_end_date: Optional[str] = None,
-        planned_effort: Optional[str] = None,
-        story_points: Optional[int] = None,
-        sprint_id: Optional[int] = None,
-        version_id: Optional[int] = None,
-        custom_fields: Optional[Dict[str, Any]] = None,
-        # notes (create_note / update_note)
-        note_id: Optional[int] = None,
-        content: Optional[str] = None,
-        # associations (create_association / get_associations / delete_association)
         module_name: Optional[str] = None,
-        ids: Optional[List[int]] = None,
-        association_id: Optional[int] = None,
-        # filter
-        query: Optional[str] = None,
         filter: Optional[str] = None,
         page: int = 1,
         per_page: int = 30,
     ) -> Dict[str, Any]:
-        """Manage Freshservice Project Tasks (NewGen).
-
-        Tasks organize project work — epics, user stories, subtasks, etc.
-        Each task has a type, status, priority, assignee, and can be linked
-        to sprints, versions, and parent tasks.
+        """Read Freshservice Projects (NewGen).
 
         Args:
-            action: One of 'create', 'update', 'get', 'list', 'filter',
-                    'delete', 'get_task_types', 'get_task_type_fields',
-                    'get_task_statuses', 'get_task_priorities',
-                    'create_note', 'list_notes', 'update_note', 'delete_note',
-                    'create_association', 'get_associations', 'delete_association'.
-            project_id: Project ID (required for all actions).
-            task_id: Task ID (required for get/update/delete and note/association ops).
-            title: Task title (create — MANDATORY).
-            description: Task description (HTML or plain text).
-            type_id: Task type ID — obtain via get_task_types (create — MANDATORY).
-            status_id: Task status ID — obtain via get_task_statuses.
-            priority_id: Task priority ID — obtain via get_task_priorities.
-            assignee_id: User ID to assign the task to.
-            reporter_id: User ID of the reporter (defaults to creator).
-            parent_id: Parent task/epic ID for subtasks.
-            planned_start_date: ISO datetime (yyyy-mm-ddThh:mm:ssZ).
-            planned_end_date: ISO datetime (yyyy-mm-ddThh:mm:ssZ).
-            planned_effort: Effort string, e.g. '1w 2d 3h 4m'.
-            story_points: Story points for the task.
-            sprint_id: Sprint ID — obtain via manage_project get_sprints.
-            version_id: Version ID — obtain via manage_project get_versions.
-            custom_fields: Custom fields dict.
-            note_id: Note ID (update_note / delete_note).
-            content: Note content — HTML (create_note / update_note).
+            action: One of 'list', 'get', 'get_fields', 'get_templates',
+                    'get_memberships', 'get_associations', 'get_versions',
+                    'get_sprints'.
+            project_id: Project ID (required for most read actions except list,
+                get_fields, get_templates).
             module_name: Association module — 'tickets', 'problems',
-                'changes', or 'assets' (association operations).
-            ids: Entity IDs to associate (create_association).
-            association_id: Entity ID to dissociate (delete_association).
-            query: Filter query for 'filter' action. Format:
-                "priority_id:3 AND created_at:>'2025-01-01'"
-            filter: Predefined filter for 'list' — 'all', etc.
-            page/per_page: Pagination.
+                'changes', or 'assets' (get_associations).
+            filter: Filter for list — 'completed', 'incomplete', 'archived',
+                'open', 'in_progress'. Default shows open + completed.
+            page/per_page: Pagination (list, max 100 per page).
         """
         action = action.lower().strip()
+        err = reject_unless_in(action, _READ_PROJECT, "read_project", "manage_project")
+        if err:
+            return err
+        return await _project_handler(
+            action, project_id,
+            name=None, description=None, key=None, project_type=None,
+            status_id=None, priority_id=None, manager_id=None,
+            start_date=None, end_date=None, visibility=None,
+            sprint_duration=None, custom_fields=None, project_template_id=None,
+            members=None, module_name=module_name, ids=None, association_id=None,
+            filter=filter, page=page, per_page=per_page,
+        )
 
+    @mcp.tool()
+    async def manage_project(
+        action: str,
+        project_id: Optional[int] = None,
+        # core fields (create / update)
+        name: Optional[str] = None,
+        description: Optional[str] = None,
+        key: Optional[str] = None,
+        project_type: Optional[int] = None,
+        status_id: Optional[int] = None,
+        priority_id: Optional[int] = None,
+        manager_id: Optional[int] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        visibility: Optional[int] = None,
+        sprint_duration: Optional[int] = None,
+        custom_fields: Optional[Dict[str, Any]] = None,
+        project_template_id: Optional[int] = None,
+        # members (add_members)
+        members: Optional[List[Dict[str, Any]]] = None,
+        # associations
+        module_name: Optional[str] = None,
+        ids: Optional[List[int]] = None,
+        association_id: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """Write actions on Freshservice Projects (NewGen).
+
+        Projects let you plan, prioritize, manage, and track work within
+        the service desk. You can associate tickets, changes, problems,
+        and assets to projects.
+
+        Args:
+            action: One of 'create', 'update', 'delete', 'archive', 'restore',
+                    'add_members', 'create_association', 'delete_association'.
+            project_id: Project ID (required for most actions except create).
+            name: Project name (create — MANDATORY, max 255 chars).
+            description: Project description (HTML or plain text).
+            key: Project key — starts with letter, letters+numbers, max 10 chars.
+                Auto-generated from name if omitted on create.
+            project_type: 0=Software, 1=Business (create — MANDATORY).
+            status_id: 1=Yet to start, 2=In Progress, 3=Completed.
+            priority_id: 1=Low, 2=Medium, 3=High, 4=Urgent.
+            manager_id: User ID of the project manager.
+            start_date: Start date (yyyy-mm-dd).
+            end_date: End date (yyyy-mm-dd).
+            visibility: 0=Private, 1=Public (default 1).
+            sprint_duration: Sprint duration in days (default 14).
+            custom_fields: Custom fields dict.
+            project_template_id: Template ID (create only).
+            members: List of members to add (add_members).
+                Format: [{"email": "user@example.com", "role": 1}]
+                role: 1 or 2 (project admin vs member).
+            module_name: Association module — 'tickets', 'problems',
+                'changes', or 'assets' (create/delete_association).
+            ids: List of IDs to associate (create_association).
+            association_id: Entity ID to dissociate (delete_association).
+        """
+        action = action.lower().strip()
+        err = reject_unless_in(action, _WRITE_PROJECT, "manage_project", "read_project")
+        if err:
+            return err
+        return await _project_handler(
+            action, project_id,
+            name=name, description=description, key=key, project_type=project_type,
+            status_id=status_id, priority_id=priority_id, manager_id=manager_id,
+            start_date=start_date, end_date=end_date, visibility=visibility,
+            sprint_duration=sprint_duration, custom_fields=custom_fields,
+            project_template_id=project_template_id,
+            members=members, module_name=module_name, ids=ids,
+            association_id=association_id,
+            filter=None, page=1, per_page=30,
+        )
+
+    # ------------------------------------------------------------------ #
+    #  project_task — read/manage split                                   #
+    # ------------------------------------------------------------------ #
+    _READ_PROJECT_TASK = {
+        "list", "filter", "get", "get_task_types", "get_task_type_fields",
+        "get_task_statuses", "get_task_priorities", "list_notes",
+        "get_associations",
+    }
+    _WRITE_PROJECT_TASK = {
+        "create", "update", "delete", "create_note", "update_note",
+        "delete_note", "create_association", "delete_association",
+    }
+
+    async def _project_task_handler(
+        action: str,
+        project_id: Optional[int],
+        task_id: Optional[int],
+        title: Optional[str],
+        description: Optional[str],
+        type_id: Optional[int],
+        status_id: Optional[int],
+        priority_id: Optional[int],
+        assignee_id: Optional[int],
+        reporter_id: Optional[int],
+        parent_id: Optional[int],
+        planned_start_date: Optional[str],
+        planned_end_date: Optional[str],
+        planned_effort: Optional[str],
+        story_points: Optional[int],
+        sprint_id: Optional[int],
+        version_id: Optional[int],
+        custom_fields: Optional[Dict[str, Any]],
+        note_id: Optional[int],
+        content: Optional[str],
+        module_name: Optional[str],
+        ids: Optional[List[int]],
+        association_id: Optional[int],
+        query: Optional[str],
+        filter: Optional[str],
+        page: int,
+        per_page: int,
+    ) -> Dict[str, Any]:
         if not project_id:
             return {"error": "project_id is required for all project task actions"}
 
@@ -686,10 +731,130 @@ def register_project_tools(mcp) -> None:  # noqa: C901
             except Exception as e:
                 return handle_error(e, f"delete task {module_name} association")
 
-        return {
-            "error": f"Unknown action '{action}'. Valid: create, update, get, list, "
-            "filter, delete, get_task_types, get_task_type_fields, "
-            "get_task_statuses, get_task_priorities, create_note, list_notes, "
-            "update_note, delete_note, create_association, get_associations, "
-            "delete_association"
-        }
+        return {"error": "unreachable"}
+
+    @mcp.tool()
+    async def read_project_task(
+        action: str,
+        project_id: Optional[int] = None,
+        task_id: Optional[int] = None,
+        type_id: Optional[int] = None,
+        module_name: Optional[str] = None,
+        query: Optional[str] = None,
+        filter: Optional[str] = None,
+        page: int = 1,
+        per_page: int = 30,
+    ) -> Dict[str, Any]:
+        """Read Freshservice Project Tasks (NewGen).
+
+        Args:
+            action: One of 'list', 'filter', 'get', 'get_task_types',
+                    'get_task_type_fields', 'get_task_statuses',
+                    'get_task_priorities', 'list_notes', 'get_associations'.
+            project_id: Project ID (required for all actions).
+            task_id: Task ID (required for get/list_notes/get_associations).
+            type_id: Task type ID (required for get_task_type_fields).
+            module_name: Association module — 'tickets', 'problems',
+                'changes', or 'assets' (get_associations).
+            query: Filter query for 'filter' action. Format:
+                "priority_id:3 AND created_at:>'2025-01-01'"
+            filter: Predefined filter for 'list' — 'all', etc.
+            page/per_page: Pagination.
+        """
+        action = action.lower().strip()
+        err = reject_unless_in(action, _READ_PROJECT_TASK, "read_project_task", "manage_project_task")
+        if err:
+            return err
+        return await _project_task_handler(
+            action, project_id, task_id,
+            title=None, description=None, type_id=type_id,
+            status_id=None, priority_id=None, assignee_id=None,
+            reporter_id=None, parent_id=None,
+            planned_start_date=None, planned_end_date=None,
+            planned_effort=None, story_points=None,
+            sprint_id=None, version_id=None, custom_fields=None,
+            note_id=None, content=None,
+            module_name=module_name, ids=None, association_id=None,
+            query=query, filter=filter, page=page, per_page=per_page,
+        )
+
+    @mcp.tool()
+    async def manage_project_task(
+        action: str,
+        project_id: Optional[int] = None,
+        task_id: Optional[int] = None,
+        # core fields (create / update)
+        title: Optional[str] = None,
+        description: Optional[str] = None,
+        type_id: Optional[int] = None,
+        status_id: Optional[int] = None,
+        priority_id: Optional[int] = None,
+        assignee_id: Optional[int] = None,
+        reporter_id: Optional[int] = None,
+        parent_id: Optional[int] = None,
+        planned_start_date: Optional[str] = None,
+        planned_end_date: Optional[str] = None,
+        planned_effort: Optional[str] = None,
+        story_points: Optional[int] = None,
+        sprint_id: Optional[int] = None,
+        version_id: Optional[int] = None,
+        custom_fields: Optional[Dict[str, Any]] = None,
+        # notes (create_note / update_note)
+        note_id: Optional[int] = None,
+        content: Optional[str] = None,
+        # associations
+        module_name: Optional[str] = None,
+        ids: Optional[List[int]] = None,
+        association_id: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """Write actions on Freshservice Project Tasks (NewGen).
+
+        Tasks organize project work — epics, user stories, subtasks, etc.
+        Each task has a type, status, priority, assignee, and can be linked
+        to sprints, versions, and parent tasks.
+
+        Args:
+            action: One of 'create', 'update', 'delete', 'create_note',
+                    'update_note', 'delete_note', 'create_association',
+                    'delete_association'.
+            project_id: Project ID (required for all actions).
+            task_id: Task ID (required for update/delete and note/association ops).
+            title: Task title (create — MANDATORY).
+            description: Task description (HTML or plain text).
+            type_id: Task type ID — obtain via get_task_types (create — MANDATORY).
+            status_id: Task status ID — obtain via get_task_statuses.
+            priority_id: Task priority ID — obtain via get_task_priorities.
+            assignee_id: User ID to assign the task to.
+            reporter_id: User ID of the reporter (defaults to creator).
+            parent_id: Parent task/epic ID for subtasks.
+            planned_start_date: ISO datetime (yyyy-mm-ddThh:mm:ssZ).
+            planned_end_date: ISO datetime (yyyy-mm-ddThh:mm:ssZ).
+            planned_effort: Effort string, e.g. '1w 2d 3h 4m'.
+            story_points: Story points for the task.
+            sprint_id: Sprint ID — obtain via read_project get_sprints.
+            version_id: Version ID — obtain via read_project get_versions.
+            custom_fields: Custom fields dict.
+            note_id: Note ID (update_note / delete_note).
+            content: Note content — HTML (create_note / update_note).
+            module_name: Association module — 'tickets', 'problems',
+                'changes', or 'assets' (association operations).
+            ids: Entity IDs to associate (create_association).
+            association_id: Entity ID to dissociate (delete_association).
+        """
+        action = action.lower().strip()
+        err = reject_unless_in(action, _WRITE_PROJECT_TASK, "manage_project_task", "read_project_task")
+        if err:
+            return err
+        return await _project_task_handler(
+            action, project_id, task_id,
+            title=title, description=description, type_id=type_id,
+            status_id=status_id, priority_id=priority_id,
+            assignee_id=assignee_id, reporter_id=reporter_id,
+            parent_id=parent_id, planned_start_date=planned_start_date,
+            planned_end_date=planned_end_date, planned_effort=planned_effort,
+            story_points=story_points, sprint_id=sprint_id,
+            version_id=version_id, custom_fields=custom_fields,
+            note_id=note_id, content=content,
+            module_name=module_name, ids=ids, association_id=association_id,
+            query=None, filter=None, page=1, per_page=30,
+        )

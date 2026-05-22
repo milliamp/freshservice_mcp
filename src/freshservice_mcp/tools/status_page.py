@@ -1,9 +1,22 @@
 """Freshservice MCP — Status Page tools.
 
-Exposes 1 tool:
-  • manage_status_page — list pages, service components, CRUD maintenance
-    (from change or maintenance-window), CRUD incidents (from ticket),
-    maintenance/incident updates, statuses, and subscriber management.
+Each tool is exposed as a read_/manage_ pair so MCP clients can grant
+read-only or read-write access independently.
+
+Tools:
+  • read_status_page / manage_status_page                     —
+        list_pages/list_components/get_component/list_maintenance/
+        get_maintenance/list_maintenance_updates/list_maintenance_statuses/
+        list_incidents/get_incident/list_incident_updates/
+        list_incident_statuses/list_subscribers/get_subscriber
+      vs create_maintenance/update_maintenance/delete_maintenance/
+        create_maintenance_update/update_maintenance_update/
+        delete_maintenance_update/create_incident/update_incident/
+        delete_incident/create_incident_update/update_incident_update/
+        delete_incident_update/create_subscriber/update_subscriber/
+        delete_subscriber
+  • read_maintenance_window / manage_maintenance_window       —
+        list/get vs create/update/delete
 
 URL patterns per official Freshservice API v2 docs
 (https://api.freshservice.com/v2/#status-page):
@@ -38,6 +51,7 @@ from typing import Any, Dict, List, Optional
 import httpx
 
 from ..http_client import api_delete, api_get, api_post, api_put, handle_error
+from ._split import reject_unless_in
 
 # Module-level caches for auto-discovered IDs
 _cached_workspace_id: Optional[int] = None
@@ -101,117 +115,64 @@ def _maint_prefix(change_id: Optional[int], maintenance_window_id: Optional[int]
     return None
 
 
-def register_status_page_tools(mcp) -> None:
+def register_status_page_tools(mcp) -> None:  # noqa: C901
     """Register status page tools on *mcp*."""
 
-    @mcp.tool()
-    async def manage_status_page(
+    # ------------------------------------------------------------------ #
+    #  status_page — read/manage split                                    #
+    # ------------------------------------------------------------------ #
+    _READ_STATUS_PAGE = {
+        "list_pages",
+        "list_components", "get_component",
+        "list_maintenance", "get_maintenance",
+        "list_maintenance_updates",
+        "list_maintenance_statuses",
+        "list_incidents", "get_incident",
+        "list_incident_updates",
+        "list_incident_statuses",
+        "list_subscribers", "get_subscriber",
+    }
+    _WRITE_STATUS_PAGE = {
+        "create_maintenance", "update_maintenance", "delete_maintenance",
+        "create_maintenance_update", "update_maintenance_update", "delete_maintenance_update",
+        "create_incident", "update_incident", "delete_incident",
+        "create_incident_update", "update_incident_update", "delete_incident_update",
+        "create_subscriber", "update_subscriber", "delete_subscriber",
+    }
+
+    async def _status_page_handler(
         action: str,
         # identifiers
-        status_page_id: Optional[int] = None,
-        change_id: Optional[int] = None,
-        maintenance_window_id: Optional[int] = None,
-        ticket_id: Optional[int] = None,
-        maintenance_id: Optional[int] = None,
-        incident_id: Optional[int] = None,
-        update_id: Optional[int] = None,
-        component_id: Optional[int] = None,
-        subscriber_id: Optional[int] = None,
+        status_page_id: Optional[int],
+        change_id: Optional[int],
+        maintenance_window_id: Optional[int],
+        ticket_id: Optional[int],
+        maintenance_id: Optional[int],
+        incident_id: Optional[int],
+        update_id: Optional[int],
+        component_id: Optional[int],
+        subscriber_id: Optional[int],
         # maintenance / incident fields
-        title: Optional[str] = None,
-        description: Optional[str] = None,
-        started_at: Optional[str] = None,
-        ended_at: Optional[str] = None,
-        impacted_services: Optional[List[Dict[str, Any]]] = None,
-        notifications: Optional[List[Dict[str, Any]]] = None,
-        is_private: Optional[bool] = None,
+        title: Optional[str],
+        description: Optional[str],
+        started_at: Optional[str],
+        ended_at: Optional[str],
+        impacted_services: Optional[List[Dict[str, Any]]],
+        notifications: Optional[List[Dict[str, Any]]],
+        is_private: Optional[bool],
         # updates
-        body: Optional[str] = None,
-        update_status: Optional[str] = None,
+        body: Optional[str],
+        update_status: Optional[str],
         # subscriber fields
-        email: Optional[str] = None,
-        service_ids: Optional[List[int]] = None,
-        subscribe_all_services: Optional[bool] = None,
-        subscriber_type: Optional[int] = None,
-        timezone: Optional[str] = None,
+        email: Optional[str],
+        service_ids: Optional[List[int]],
+        subscribe_all_services: Optional[bool],
+        subscriber_type: Optional[int],
+        timezone: Optional[str],
         # pagination
-        page: int = 1,
-        per_page: int = 30,
+        page: int,
+        per_page: int,
     ) -> Dict[str, Any]:
-        """Unified Status Page operations: maintenance windows, incidents, components.
-
-        IMPORTANT — Publishing a maintenance on the Status Page:
-            To publish a maintenance, you MUST provide either change_id or
-            maintenance_window_id. The rules are:
-
-            1. If the Change already has a maintenance_window (check via
-               manage_change action='get' → maintenance_window.id), use change_id.
-            2. If the Change has NO maintenance_window (maintenance_window is
-               empty {}), you MUST first create a Maintenance Window using
-               manage_maintenance_window action='create' with name, description,
-               start_time, end_time, AND change_id (to auto-associate the MW
-               with the Change). Then use the returned maintenance_window_id here.
-            3. You can also use maintenance_window_id directly if you already
-               know the MW ID.
-
-            Required fields for create_maintenance:
-              - title, description, started_at, ended_at, impacted_services
-              - impacted_services format: [{"id": <service_component_id>, "status": 5}]
-                status values: 1=Operational, 5=Under maintenance, 10=Degraded,
-                20=Partial outage, 30=Major outage
-              - Get available service component IDs via action='list_components'
-
-        Args:
-            action: One of:
-              Pages:        'list_pages'
-              Components:   'list_components', 'get_component'
-              Maintenance:  'list_maintenance', 'create_maintenance', 'update_maintenance',
-                            'get_maintenance', 'delete_maintenance'
-              Maintenance Updates: 'create_maintenance_update', 'list_maintenance_updates',
-                            'update_maintenance_update', 'delete_maintenance_update'
-              Incidents:    'list_incidents', 'create_incident', 'update_incident',
-                            'get_incident', 'delete_incident'
-              Incident Updates: 'create_incident_update', 'list_incident_updates',
-                            'update_incident_update', 'delete_incident_update'
-              Statuses:     'list_incident_statuses', 'list_maintenance_statuses'
-              Subscribers:  'list_subscribers', 'get_subscriber', 'create_subscriber',
-                            'update_subscriber', 'delete_subscriber'
-            status_page_id: Status page ID (auto-discovered if omitted).
-            change_id: Change ID — maintenance CRUD from a change. The change
-                MUST have an associated maintenance_window or the API returns 404.
-                Check via manage_change get → if maintenance_window is empty {},
-                use manage_maintenance_window to create one first, then pass
-                maintenance_window_id instead.
-            maintenance_window_id: Maintenance Window ID — maintenance CRUD from a MW.
-                Use this when the change has no built-in MW, or for standalone MW
-                publishing. Create a MW first via manage_maintenance_window action='create'.
-            ticket_id: Ticket ID — incident CRUD (required for create/update/get/delete,
-                not needed for list_incidents).
-            maintenance_id: Maintenance ID (get/update/delete maintenance, maintenance updates)
-            incident_id: Incident ID (get/update/delete incident, incident updates)
-            update_id: Update ID (update/delete maintenance/incident updates)
-            component_id: Service component ID (get_component)
-            subscriber_id: Subscriber ID (get/update/delete subscriber)
-            title: Title (create maintenance/incident) — Mandatory
-            description: HTML description
-            started_at: ISO datetime — start time (maintenance/incident)
-            ended_at: ISO datetime — end time (maintenance)
-            impacted_services: [{id, status}] — 1=Operational, 5=Under maintenance,
-                10=Degraded, 20=Partial outage, 30=Major outage — Mandatory for create_maintenance
-            notifications: Array of notification dicts [{trigger, options: {value}}]
-                trigger: 1=On start, 2=Before start, 3=On complete
-            is_private: Private maintenance/incident (default false)
-            body: Update body text (maintenance/incident updates)
-            update_status: Status string for updates
-            email: Subscriber email (create_subscriber — Mandatory)
-            service_ids: List of service IDs the subscriber is subscribed to
-            subscribe_all_services: true = notify for all services
-            subscriber_type: 1=External, 2=Agent, 3=Requester
-            timezone: Subscriber timezone (e.g. "UTC")
-            page/per_page: Pagination
-        """
-        action = action.lower().strip()
-
         # Auto-resolve status_page_id for actions that need it
         if action != "list_pages":
             status_page_id = await _resolve_status_page_id(status_page_id)
@@ -237,7 +198,6 @@ def register_status_page_tools(mcp) -> None:
                 return handle_error(e, "list status pages")
 
         # ── Service Components ──
-        # Docs: GET status/pages/{sp}/service-components[/{id}]
         if action == "list_components":
             try:
                 resp = await api_get(
@@ -260,8 +220,6 @@ def register_status_page_tools(mcp) -> None:
                 return handle_error(e, "get service component")
 
         # ── Maintenance — CRUD ──
-        # List:   GET status/pages/{sp}/maintenances  (no prefix needed)
-        # CRUD:   {changes/{cid} | maintenance-windows/{mwid}}/status/pages/{sp}/maintenances[/{id}]
         if action == "list_maintenance":
             try:
                 resp = await api_get(
@@ -352,7 +310,6 @@ def register_status_page_tools(mcp) -> None:
                 return handle_error(e, "delete maintenance")
 
         # ── Maintenance Updates ──
-        # URL: {prefix}/status/pages/{sp}/maintenances/{mid}/updates[/{uid}]
         if action == "list_maintenance_updates":
             prefix = _maint_prefix(change_id, maintenance_window_id)
             if not prefix or not maintenance_id:
@@ -418,7 +375,6 @@ def register_status_page_tools(mcp) -> None:
                 return handle_error(e, "delete maintenance update")
 
         # ── Maintenance Statuses ──
-        # Docs: GET status/pages/{sp}/maintenances/statuses
         if action == "list_maintenance_statuses":
             try:
                 resp = await api_get(f"status/pages/{sp}/maintenances/statuses")
@@ -428,8 +384,6 @@ def register_status_page_tools(mcp) -> None:
                 return handle_error(e, "list maintenance statuses")
 
         # ── Incidents — CRUD ──
-        # List:   GET status/pages/{sp}/incidents  (no prefix)
-        # CRUD:   tickets/{tid}/status/pages/{sp}/incidents[/{id}]
         if action == "list_incidents":
             try:
                 resp = await api_get(
@@ -509,7 +463,6 @@ def register_status_page_tools(mcp) -> None:
                 return handle_error(e, "delete incident")
 
         # ── Incident Updates ──
-        # URL: tickets/{tid}/status/pages/{sp}/incidents/{iid}/updates[/{uid}]
         if action == "list_incident_updates":
             if not ticket_id or not incident_id:
                 return {"error": "ticket_id and incident_id required"}
@@ -571,7 +524,6 @@ def register_status_page_tools(mcp) -> None:
                 return handle_error(e, "delete incident update")
 
         # ── Incident Statuses ──
-        # Docs: GET status/pages/{sp}/incidents/statuses
         if action == "list_incident_statuses":
             try:
                 resp = await api_get(f"status/pages/{sp}/incidents/statuses")
@@ -581,7 +533,6 @@ def register_status_page_tools(mcp) -> None:
                 return handle_error(e, "list incident statuses")
 
         # ── Subscribers ──
-        # Docs: GET|POST status/pages/{sp}/subscribers[/{sid}]
         if action == "list_subscribers":
             try:
                 resp = await api_get(
@@ -656,89 +607,197 @@ def register_status_page_tools(mcp) -> None:
             except Exception as e:
                 return handle_error(e, "delete subscriber")
 
-        return {
-            "error": f"Unknown action '{action}'. Valid: list_pages, list_components, "
-            "get_component, list_maintenance, create_maintenance, get_maintenance, "
-            "update_maintenance, delete_maintenance, list_maintenance_updates, "
-            "create_maintenance_update, update_maintenance_update, delete_maintenance_update, "
-            "list_maintenance_statuses, list_incidents, create_incident, get_incident, "
-            "update_incident, delete_incident, list_incident_updates, create_incident_update, "
-            "update_incident_update, delete_incident_update, list_incident_statuses, "
-            "list_subscribers, get_subscriber, create_subscriber, update_subscriber, "
-            "delete_subscriber"
-        }
+        return {"error": "unreachable"}
 
     @mcp.tool()
-    async def manage_maintenance_window(
+    async def read_status_page(
         action: str,
-        maintenance_window_id: Optional[int] = None,
+        status_page_id: Optional[int] = None,
         change_id: Optional[int] = None,
-        name: Optional[str] = None,
-        description: Optional[str] = None,
-        start_time: Optional[str] = None,
-        end_time: Optional[str] = None,
-        workspace_id: Optional[int] = None,
-        alert_suppression: Optional[bool] = None,
-        impacted_services: Optional[List[Dict[str, Any]]] = None,
-        notifications: Optional[List[Dict[str, Any]]] = None,
-        is_private: Optional[bool] = None,
+        maintenance_window_id: Optional[int] = None,
+        ticket_id: Optional[int] = None,
+        maintenance_id: Optional[int] = None,
+        incident_id: Optional[int] = None,
+        component_id: Optional[int] = None,
+        subscriber_id: Optional[int] = None,
         page: int = 1,
         per_page: int = 30,
     ) -> Dict[str, Any]:
-        """Manage Freshservice Maintenance Windows.
-
-        Maintenance Windows are time-based windows used to schedule planned
-        maintenance. They can be associated with Changes and are REQUIRED
-        to publish a maintenance on a Status Page.
-
-        ONE-STOP WORKFLOW — Create MW + associate Change + publish on Status Page:
-            Call action='create' with:
-              - name, description, start_time, end_time (MW fields)
-              - change_id (auto-associates MW with the Change)
-              - impacted_services (triggers auto-publish on Status Page)
-
-            This single call will:
-              a) Create the Maintenance Window
-              b) Associate it with the Change (if change_id provided)
-              c) Publish it on the Status Page (if impacted_services provided)
-              d) Return MW details, association status, and Status Page maintenance
-
-            impacted_services format: [{"id": <service_component_id>, "status": N}]
-              Status: 1=Operational, 5=Under maintenance, 10=Degraded,
-                      20=Partial outage, 30=Major outage
-            To find service_component IDs, use manage_status_page
-              action='list_components'.
-
-            ALTERNATIVE: You can also do each step separately:
-              - manage_maintenance_window create (without impacted_services)
-              - manage_change update with maintenance_window_id
-              - manage_status_page create_maintenance with maintenance_window_id
+        """Read Status Page resources: pages, components, maintenance,
+        incidents, statuses, subscribers.
 
         Args:
-            action: One of 'list', 'get', 'create', 'update', 'delete'.
-            maintenance_window_id: MW ID (required for get/update/delete).
-            change_id: Change ID — if provided on 'create', the new MW
-                is automatically associated with this Change.
-            name: MW name (required for create).
-            description: MW description.
-            start_time: ISO datetime — window start (required for create).
-            end_time: ISO datetime — window end (required for create).
-            workspace_id: Workspace ID (required for create; auto-discovered
-                if omitted).
-            alert_suppression: Suppress alerts during window (default false).
-            impacted_services: If provided on 'create', auto-publishes a
-                maintenance on the Status Page after creating the MW.
-                Format: [{"id": <service_component_id>, "status": <int>}]
-                Status: 1=Operational, 5=Under maintenance, 10=Degraded,
-                        20=Partial outage, 30=Major outage.
-            notifications: Status Page notification triggers (optional).
-                Format: [{"trigger": N, "options": {"value": V}}]
-                Trigger: 1=On start, 2=Before start, 3=On complete.
-            is_private: Mark the Status Page maintenance as private.
-            page/per_page: Pagination (list).
+            action: One of:
+              Pages:        'list_pages'
+              Components:   'list_components', 'get_component'
+              Maintenance:  'list_maintenance', 'get_maintenance'
+              Maintenance Updates: 'list_maintenance_updates'
+              Incidents:    'list_incidents', 'get_incident'
+              Incident Updates: 'list_incident_updates'
+              Statuses:     'list_incident_statuses', 'list_maintenance_statuses'
+              Subscribers:  'list_subscribers', 'get_subscriber'
+            status_page_id: Status page ID (auto-discovered if omitted).
+            change_id: Change ID — maintenance reads via a change.
+            maintenance_window_id: MW ID — maintenance reads via a MW.
+            ticket_id: Ticket ID — required for incident reads (get/list updates).
+            maintenance_id: Maintenance ID (get_maintenance, list_maintenance_updates).
+            incident_id: Incident ID (get_incident, list_incident_updates).
+            component_id: Service component ID (get_component).
+            subscriber_id: Subscriber ID (get_subscriber).
+            page/per_page: Pagination.
         """
         action = action.lower().strip()
+        err = reject_unless_in(action, _READ_STATUS_PAGE, "read_status_page", "manage_status_page")
+        if err:
+            return err
+        return await _status_page_handler(
+            action,
+            status_page_id=status_page_id, change_id=change_id,
+            maintenance_window_id=maintenance_window_id, ticket_id=ticket_id,
+            maintenance_id=maintenance_id, incident_id=incident_id,
+            update_id=None, component_id=component_id,
+            subscriber_id=subscriber_id,
+            title=None, description=None, started_at=None, ended_at=None,
+            impacted_services=None, notifications=None, is_private=None,
+            body=None, update_status=None,
+            email=None, service_ids=None, subscribe_all_services=None,
+            subscriber_type=None, timezone=None,
+            page=page, per_page=per_page,
+        )
 
+    @mcp.tool()
+    async def manage_status_page(
+        action: str,
+        # identifiers
+        status_page_id: Optional[int] = None,
+        change_id: Optional[int] = None,
+        maintenance_window_id: Optional[int] = None,
+        ticket_id: Optional[int] = None,
+        maintenance_id: Optional[int] = None,
+        incident_id: Optional[int] = None,
+        update_id: Optional[int] = None,
+        subscriber_id: Optional[int] = None,
+        # maintenance / incident fields
+        title: Optional[str] = None,
+        description: Optional[str] = None,
+        started_at: Optional[str] = None,
+        ended_at: Optional[str] = None,
+        impacted_services: Optional[List[Dict[str, Any]]] = None,
+        notifications: Optional[List[Dict[str, Any]]] = None,
+        is_private: Optional[bool] = None,
+        # updates
+        body: Optional[str] = None,
+        update_status: Optional[str] = None,
+        # subscriber fields
+        email: Optional[str] = None,
+        service_ids: Optional[List[int]] = None,
+        subscribe_all_services: Optional[bool] = None,
+        subscriber_type: Optional[int] = None,
+        timezone: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Write actions on Status Page: maintenance windows, incidents,
+        updates, subscribers.
+
+        IMPORTANT — Publishing a maintenance on the Status Page:
+            To publish a maintenance, you MUST provide either change_id or
+            maintenance_window_id. The rules are:
+
+            1. If the Change already has a maintenance_window (check via
+               read_change action='get' → maintenance_window.id), use change_id.
+            2. If the Change has NO maintenance_window (maintenance_window is
+               empty {}), you MUST first create a Maintenance Window using
+               manage_maintenance_window action='create' with name, description,
+               start_time, end_time, AND change_id (to auto-associate the MW
+               with the Change). Then use the returned maintenance_window_id here.
+            3. You can also use maintenance_window_id directly if you already
+               know the MW ID.
+
+            Required fields for create_maintenance:
+              - title, description, started_at, ended_at, impacted_services
+              - impacted_services format: [{"id": <service_component_id>, "status": 5}]
+                status values: 1=Operational, 5=Under maintenance, 10=Degraded,
+                20=Partial outage, 30=Major outage
+              - Get available service component IDs via read_status_page
+                action='list_components'
+
+        Args:
+            action: One of:
+              Maintenance:  'create_maintenance', 'update_maintenance', 'delete_maintenance'
+              Maintenance Updates: 'create_maintenance_update',
+                            'update_maintenance_update', 'delete_maintenance_update'
+              Incidents:    'create_incident', 'update_incident', 'delete_incident'
+              Incident Updates: 'create_incident_update',
+                            'update_incident_update', 'delete_incident_update'
+              Subscribers:  'create_subscriber', 'update_subscriber', 'delete_subscriber'
+            status_page_id: Status page ID (auto-discovered if omitted).
+            change_id: Change ID — maintenance CRUD from a change.
+            maintenance_window_id: Maintenance Window ID — maintenance CRUD from a MW.
+            ticket_id: Ticket ID — incident CRUD (required for create/update/delete).
+            maintenance_id: Maintenance ID (update/delete maintenance, maintenance updates).
+            incident_id: Incident ID (update/delete incident, incident updates).
+            update_id: Update ID (update/delete maintenance/incident updates).
+            subscriber_id: Subscriber ID (update/delete subscriber).
+            title: Title (create maintenance/incident) — Mandatory.
+            description: HTML description.
+            started_at: ISO datetime — start time (maintenance/incident).
+            ended_at: ISO datetime — end time (maintenance).
+            impacted_services: [{id, status}] — 1=Operational, 5=Under maintenance,
+                10=Degraded, 20=Partial outage, 30=Major outage.
+            notifications: Array of notification dicts [{trigger, options: {value}}].
+                trigger: 1=On start, 2=Before start, 3=On complete.
+            is_private: Private maintenance/incident (default false).
+            body: Update body text (maintenance/incident updates).
+            update_status: Status string for updates.
+            email: Subscriber email (create_subscriber — Mandatory).
+            service_ids: List of service IDs the subscriber is subscribed to.
+            subscribe_all_services: true = notify for all services.
+            subscriber_type: 1=External, 2=Agent, 3=Requester.
+            timezone: Subscriber timezone (e.g. "UTC").
+        """
+        action = action.lower().strip()
+        err = reject_unless_in(action, _WRITE_STATUS_PAGE, "manage_status_page", "read_status_page")
+        if err:
+            return err
+        return await _status_page_handler(
+            action,
+            status_page_id=status_page_id, change_id=change_id,
+            maintenance_window_id=maintenance_window_id, ticket_id=ticket_id,
+            maintenance_id=maintenance_id, incident_id=incident_id,
+            update_id=update_id, component_id=None,
+            subscriber_id=subscriber_id,
+            title=title, description=description,
+            started_at=started_at, ended_at=ended_at,
+            impacted_services=impacted_services, notifications=notifications,
+            is_private=is_private,
+            body=body, update_status=update_status,
+            email=email, service_ids=service_ids,
+            subscribe_all_services=subscribe_all_services,
+            subscriber_type=subscriber_type, timezone=timezone,
+            page=1, per_page=30,
+        )
+
+    # ------------------------------------------------------------------ #
+    #  maintenance_window — read/manage split                             #
+    # ------------------------------------------------------------------ #
+    _READ_MAINTENANCE_WINDOW = {"list", "get"}
+    _WRITE_MAINTENANCE_WINDOW = {"create", "update", "delete"}
+
+    async def _maintenance_window_handler(
+        action: str,
+        maintenance_window_id: Optional[int],
+        change_id: Optional[int],
+        name: Optional[str],
+        description: Optional[str],
+        start_time: Optional[str],
+        end_time: Optional[str],
+        workspace_id: Optional[int],
+        alert_suppression: Optional[bool],
+        impacted_services: Optional[List[Dict[str, Any]]],
+        notifications: Optional[List[Dict[str, Any]]],
+        is_private: Optional[bool],
+        page: int,
+        per_page: int,
+    ) -> Dict[str, Any]:
         if action == "list":
             try:
                 params: Dict[str, Any] = {"page": page, "per_page": per_page}
@@ -826,7 +885,7 @@ def register_status_page_tools(mcp) -> None:
                 sp_error = None
                 sp_maintenance = None
                 if impacted_services and mw_id:
-                    sp = await _resolve_status_page_id()
+                    sp = await _resolve_status_page_id(None)
                     if not sp:
                         sp_error = "Could not auto-discover status_page_id"
                     else:
@@ -938,6 +997,113 @@ def register_status_page_tools(mcp) -> None:
             except Exception as e:
                 return handle_error(e, "delete maintenance window")
 
-        return {
-            "error": f"Unknown action '{action}'. Valid: list, get, create, update, delete"
-        }
+        return {"error": "unreachable"}
+
+    @mcp.tool()
+    async def read_maintenance_window(
+        action: str,
+        maintenance_window_id: Optional[int] = None,
+        page: int = 1,
+        per_page: int = 30,
+    ) -> Dict[str, Any]:
+        """Read Freshservice Maintenance Windows.
+
+        Args:
+            action: 'list', 'get'.
+            maintenance_window_id: MW ID (required for get).
+            page/per_page: Pagination (list).
+        """
+        action = action.lower().strip()
+        err = reject_unless_in(action, _READ_MAINTENANCE_WINDOW, "read_maintenance_window", "manage_maintenance_window")
+        if err:
+            return err
+        return await _maintenance_window_handler(
+            action,
+            maintenance_window_id=maintenance_window_id,
+            change_id=None, name=None, description=None,
+            start_time=None, end_time=None, workspace_id=None,
+            alert_suppression=None, impacted_services=None,
+            notifications=None, is_private=None,
+            page=page, per_page=per_page,
+        )
+
+    @mcp.tool()
+    async def manage_maintenance_window(
+        action: str,
+        maintenance_window_id: Optional[int] = None,
+        change_id: Optional[int] = None,
+        name: Optional[str] = None,
+        description: Optional[str] = None,
+        start_time: Optional[str] = None,
+        end_time: Optional[str] = None,
+        workspace_id: Optional[int] = None,
+        alert_suppression: Optional[bool] = None,
+        impacted_services: Optional[List[Dict[str, Any]]] = None,
+        notifications: Optional[List[Dict[str, Any]]] = None,
+        is_private: Optional[bool] = None,
+    ) -> Dict[str, Any]:
+        """Write actions on Freshservice Maintenance Windows.
+
+        Maintenance Windows are time-based windows used to schedule planned
+        maintenance. They can be associated with Changes and are REQUIRED
+        to publish a maintenance on a Status Page.
+
+        ONE-STOP WORKFLOW — Create MW + associate Change + publish on Status Page:
+            Call action='create' with:
+              - name, description, start_time, end_time (MW fields)
+              - change_id (auto-associates MW with the Change)
+              - impacted_services (triggers auto-publish on Status Page)
+
+            This single call will:
+              a) Create the Maintenance Window
+              b) Associate it with the Change (if change_id provided)
+              c) Publish it on the Status Page (if impacted_services provided)
+              d) Return MW details, association status, and Status Page maintenance
+
+            impacted_services format: [{"id": <service_component_id>, "status": N}]
+              Status: 1=Operational, 5=Under maintenance, 10=Degraded,
+                      20=Partial outage, 30=Major outage
+            To find service_component IDs, use read_status_page
+              action='list_components'.
+
+            ALTERNATIVE: You can also do each step separately:
+              - manage_maintenance_window create (without impacted_services)
+              - manage_change update with maintenance_window_id
+              - manage_status_page create_maintenance with maintenance_window_id
+
+        Args:
+            action: One of 'create', 'update', 'delete'.
+            maintenance_window_id: MW ID (required for update/delete).
+            change_id: Change ID — if provided on 'create', the new MW
+                is automatically associated with this Change.
+            name: MW name (required for create).
+            description: MW description.
+            start_time: ISO datetime — window start (required for create).
+            end_time: ISO datetime — window end (required for create).
+            workspace_id: Workspace ID (required for create; auto-discovered
+                if omitted).
+            alert_suppression: Suppress alerts during window (default false).
+            impacted_services: If provided on 'create', auto-publishes a
+                maintenance on the Status Page after creating the MW.
+                Format: [{"id": <service_component_id>, "status": <int>}]
+                Status: 1=Operational, 5=Under maintenance, 10=Degraded,
+                        20=Partial outage, 30=Major outage.
+            notifications: Status Page notification triggers (optional).
+                Format: [{"trigger": N, "options": {"value": V}}]
+                Trigger: 1=On start, 2=Before start, 3=On complete.
+            is_private: Mark the Status Page maintenance as private.
+        """
+        action = action.lower().strip()
+        err = reject_unless_in(action, _WRITE_MAINTENANCE_WINDOW, "manage_maintenance_window", "read_maintenance_window")
+        if err:
+            return err
+        return await _maintenance_window_handler(
+            action,
+            maintenance_window_id=maintenance_window_id,
+            change_id=change_id, name=name, description=description,
+            start_time=start_time, end_time=end_time,
+            workspace_id=workspace_id, alert_suppression=alert_suppression,
+            impacted_services=impacted_services, notifications=notifications,
+            is_private=is_private,
+            page=1, per_page=30,
+        )
