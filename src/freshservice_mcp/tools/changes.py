@@ -26,6 +26,7 @@ from ..http_client import (
     api_get,
     api_post,
     api_put,
+    gather_enrichments,
     handle_error,
     parse_link_header,
 )
@@ -126,9 +127,23 @@ def register_changes_tools(mcp) -> None:  # noqa: C901 – large by nature
             try:
                 resp = await api_get(f"changes/{change_id}")
                 resp.raise_for_status()
-                return resp.json()
+                result = resp.json()
             except Exception as e:
                 return handle_error(e, "get change")
+
+            # Parallel sub-fetches: tasks, notes, approval groups.
+            # If a maintenance_window_id is attached, fetch the MW too.
+            jobs: Dict[str, str] = {
+                "tasks": f"changes/{change_id}/tasks",
+                "notes": f"changes/{change_id}/notes",
+                "approval_groups": f"changes/{change_id}/approvals/groups",
+            }
+            mw = result.get("change", {}).get("maintenance_window") or {}
+            mw_id = mw.get("id") if isinstance(mw, dict) else None
+            if mw_id:
+                jobs["maintenance_window"] = f"maintenance_windows/{mw_id}"
+            result.update(await gather_enrichments(jobs))
+            return result
 
         # ---------- create ----------
         if action == "create":
@@ -354,6 +369,12 @@ def register_changes_tools(mcp) -> None:  # noqa: C901 – large by nature
           filter: query
 
         Optional: page, per_page, view, sort, order_by, updated_since, workspace_id.
+
+        Notes:
+          - get auto-enriches with tasks, notes, approval_groups (parallel
+            sub-fetches), plus the associated maintenance_window object when
+            maintenance_window_id is set. Failed sub-fetches surface as
+            _<key>_warning rather than failing the whole call.
         """
         action = action.lower().strip()
         err = reject_unless_in(action, _READ_CHANGE, "read_change", "manage_change")

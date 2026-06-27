@@ -50,7 +50,14 @@ from typing import Any, Dict, List, Optional
 
 import httpx
 
-from ..http_client import api_delete, api_get, api_post, api_put, handle_error
+from ..http_client import (
+    api_delete,
+    api_get,
+    api_post,
+    api_put,
+    gather_enrichments,
+    handle_error,
+)
 from ._split import reject_unless_in
 
 # Module-level caches for auto-discovered IDs
@@ -264,14 +271,18 @@ def register_status_page_tools(mcp) -> None:  # noqa: C901
             prefix = _maint_prefix(change_id, maintenance_window_id)
             if not prefix or not maintenance_id:
                 return {"error": "change_id (or maintenance_window_id) and maintenance_id required"}
+            base = f"{prefix}/status/pages/{sp}/maintenances/{maintenance_id}"
             try:
-                resp = await api_get(
-                    f"{prefix}/status/pages/{sp}/maintenances/{maintenance_id}"
-                )
+                resp = await api_get(base)
                 resp.raise_for_status()
-                return resp.json()
+                result = resp.json()
             except Exception as e:
                 return handle_error(e, "get maintenance")
+            # Enrich with the updates timeline — almost always what a reader wants.
+            result.update(await gather_enrichments({
+                "maintenance_updates": f"{base}/updates",
+            }))
+            return result
 
         if action == "update_maintenance":
             prefix = _maint_prefix(change_id, maintenance_window_id)
@@ -419,14 +430,18 @@ def register_status_page_tools(mcp) -> None:  # noqa: C901
         if action == "get_incident":
             if not ticket_id or not incident_id:
                 return {"error": "ticket_id and incident_id required"}
+            base = f"tickets/{ticket_id}/status/pages/{sp}/incidents/{incident_id}"
             try:
-                resp = await api_get(
-                    f"tickets/{ticket_id}/status/pages/{sp}/incidents/{incident_id}"
-                )
+                resp = await api_get(base)
                 resp.raise_for_status()
-                return resp.json()
+                result = resp.json()
             except Exception as e:
                 return handle_error(e, "get incident")
+            # Enrich with the updates timeline — almost always what a reader wants.
+            result.update(await gather_enrichments({
+                "incident_updates": f"{base}/updates",
+            }))
+            return result
 
         if action == "update_incident":
             if not ticket_id or not incident_id:
@@ -637,6 +652,12 @@ def register_status_page_tools(mcp) -> None:  # noqa: C901
           get_subscriber: subscriber_id
 
         Optional: status_page_id (auto-discovered), page, per_page.
+
+        Notes:
+          - get_incident auto-enriches with incident_updates (the timeline).
+          - get_maintenance auto-enriches with maintenance_updates.
+          - Failed sub-fetches surface as _<key>_warning rather than failing
+            the whole call.
         """
         action = action.lower().strip()
         err = reject_unless_in(action, _READ_STATUS_PAGE, "read_status_page", "manage_status_page")
@@ -769,9 +790,21 @@ def register_status_page_tools(mcp) -> None:  # noqa: C901
             try:
                 resp = await api_get(f"maintenance_windows/{maintenance_window_id}")
                 resp.raise_for_status()
-                return resp.json()
+                result = resp.json()
             except Exception as e:
                 return handle_error(e, "get maintenance window")
+            # If the MW is associated with a change, fetch that change too.
+            mw = result.get("maintenance_window") or result
+            associated_change_id = (
+                (mw or {}).get("change_id")
+                or (mw or {}).get("association", {}).get("change_id")
+                if isinstance(mw, dict) else None
+            )
+            if associated_change_id:
+                result.update(await gather_enrichments({
+                    "change": f"changes/{associated_change_id}",
+                }))
+            return result
 
         if action == "create":
             if not name:
@@ -964,10 +997,14 @@ def register_status_page_tools(mcp) -> None:  # noqa: C901
     ) -> Dict[str, Any]:
         """Read Freshservice Maintenance Windows.
 
-        Args:
-            action: 'list', 'get'.
-            maintenance_window_id: MW ID (required for get).
-            page/per_page: Pagination (list).
+        Actions: list, get
+        Required per action:
+          get: maintenance_window_id
+        Optional: page, per_page (list).
+
+        Notes:
+          - get auto-enriches with the associated change object when the MW
+            is linked to one. Failed enrichment surfaces as _change_warning.
         """
         action = action.lower().strip()
         err = reject_unless_in(action, _READ_MAINTENANCE_WINDOW, "read_maintenance_window", "manage_maintenance_window")

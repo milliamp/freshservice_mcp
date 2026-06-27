@@ -96,3 +96,38 @@ def handle_error(e: Exception, action: str = "request") -> Dict[str, Any]:
             details = e.response.text
         return {"success": False, "error": f"Failed to {action}: {e}", "details": details}
     return {"success": False, "error": f"Unexpected error during {action}: {e}"}
+
+
+async def _fetch_json(path: str) -> Any:
+    """Fetch ``path`` and return decoded JSON; raises on HTTP error."""
+    resp = await api_get(path)
+    resp.raise_for_status()
+    return resp.json()
+
+
+async def gather_enrichments(jobs: Dict[str, str]) -> Dict[str, Any]:
+    """Run parallel sub-fetches; merge into a dict.
+
+    ``jobs`` is a mapping of result-key → API path. Successful fetches land
+    at ``result[key]``; failures land at ``result["_" + key + "_warning"]``
+    so a partial enrichment failure never kills the parent response.
+    """
+    import asyncio
+    if not jobs:
+        return {}
+    keys = list(jobs.keys())
+    results = await asyncio.gather(
+        *[_fetch_json(jobs[k]) for k in keys],
+        return_exceptions=True,
+    )
+    enriched: Dict[str, Any] = {}
+    for key, res in zip(keys, results):
+        if isinstance(res, Exception):
+            enriched[f"_{key}_warning"] = f"Failed to fetch {jobs[key]}: {res}"
+        else:
+            # Unwrap common Freshservice envelope: {key: [...]} → just the list
+            if isinstance(res, dict) and len(res) == 1 and key in res:
+                enriched[key] = res[key]
+            else:
+                enriched[key] = res
+    return enriched

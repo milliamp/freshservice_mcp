@@ -25,6 +25,7 @@ from ..http_client import (
     api_get,
     api_post,
     api_put,
+    gather_enrichments,
     handle_error,
     parse_link_header,
 )
@@ -146,28 +147,27 @@ def register_tickets_tools(mcp) -> None:  # noqa: C901
         if action == "get":
             if not ticket_id:
                 return {"error": "ticket_id is required for get action"}
+            # Native Freshservice include params: stats + requester come back
+            # embedded in the main response, saving a round trip.
             try:
-                resp = await api_get(f"tickets/{ticket_id}")
+                resp = await api_get(
+                    f"tickets/{ticket_id}",
+                    params={"include": "stats,requester"},
+                )
                 resp.raise_for_status()
                 result = resp.json()
             except Exception as e:
                 return handle_error(e, "get ticket")
-            # Auto-enrich service request tickets with their requested items
-            # (incl. each item's custom_fields). Saves the LLM a second
-            # call to read_service_catalog(action='get_requested_items').
+
+            # Parallel sub-fetches for tasks and approvals (always),
+            # and requested_items for Service Requests.
+            jobs: Dict[str, str] = {
+                "tasks": f"tickets/{ticket_id}/tasks",
+                "approvals": f"tickets/{ticket_id}/approvals",
+            }
             if result.get("ticket", {}).get("type") == "Service Request":
-                try:
-                    items_resp = await api_get(f"tickets/{ticket_id}/requested_items")
-                    items_resp.raise_for_status()
-                    items_data = items_resp.json()
-                    if isinstance(items_data, dict) and "requested_items" in items_data:
-                        result["requested_items"] = items_data["requested_items"]
-                    else:
-                        result["requested_items"] = items_data
-                except Exception as e:
-                    result["_requested_items_warning"] = (
-                        f"Failed to fetch requested items: {e}"
-                    )
+                jobs["requested_items"] = f"tickets/{ticket_id}/requested_items"
+            result.update(await gather_enrichments(jobs))
             return result
 
         if action == "create":
@@ -515,9 +515,12 @@ def register_tickets_tools(mcp) -> None:  # noqa: C901
         Optional: page, per_page (list/filter), workspace_id (filter).
 
         Notes:
-          - get on a Service Request ticket auto-enriches the response with
-            its requested_items (incl. each item's custom_fields). No
-            second call to read_service_catalog needed.
+          - get auto-enriches the response with: stats + requester (native
+            ?include= on the main fetch), plus parallel sub-fetches for
+            tasks and approvals, plus requested_items (incl. each item's
+            custom_fields) when the ticket type is Service Request. A
+            failed sub-fetch surfaces as _<key>_warning rather than failing
+            the whole call.
           - get_fields returns ticket form fields incl. instance-specific
             status/priority choices — call before filter.
           - filter: query is URL-encoded and wrapped in double quotes.

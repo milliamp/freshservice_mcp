@@ -9,7 +9,14 @@ Tools:
 """
 from typing import Any, Dict, List, Optional
 
-from ..http_client import api_delete, api_get, api_post, api_put, handle_error
+from ..http_client import (
+    api_delete,
+    api_get,
+    api_post,
+    api_put,
+    gather_enrichments,
+    handle_error,
+)
 from ._split import reject_unless_in
 
 
@@ -82,9 +89,15 @@ def register_release_tools(mcp) -> None:  # noqa: C901
             try:
                 resp = await api_get(f"releases/{release_id}")
                 resp.raise_for_status()
-                return resp.json()
+                result = resp.json()
             except Exception as e:
                 return handle_error(e, "get release")
+            # Parallel sub-fetches for notes and tasks.
+            result.update(await gather_enrichments({
+                "notes": f"releases/{release_id}/notes",
+                "tasks": f"releases/{release_id}/tasks",
+            }))
+            return result
 
         if action == "create":
             required = {"subject": subject, "description": description,
@@ -427,6 +440,10 @@ def register_release_tools(mcp) -> None:  # noqa: C901
           get_time_entry: release_id, time_entry_id
 
         Optional: page, per_page (list/filter).
+
+        Notes:
+          - get auto-enriches with notes and tasks (parallel sub-fetches).
+            Failed sub-fetches surface as _<key>_warning.
         """
         action = action.lower().strip()
         err = reject_unless_in(action, _READ_RELEASE, "read_release", "manage_release")
