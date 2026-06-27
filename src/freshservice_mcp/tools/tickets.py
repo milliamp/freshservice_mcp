@@ -12,10 +12,9 @@ Tools:
         tickets; not folded into manage_ticket).
 """
 import urllib.parse
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 from ..config import (
-    FRESHSERVICE_DOMAIN,
     TicketPriority,
     TicketSource,
     TicketStatus,
@@ -24,7 +23,9 @@ from ..http_client import (
     api_delete,
     api_get,
     api_post,
+    api_post_multipart,
     api_put,
+    build_attachment_parts,
     gather_enrichments,
     handle_error,
     parse_link_header,
@@ -249,30 +250,64 @@ def register_tickets_tools(mcp) -> None:  # noqa: C901
         if action == "reply":
             if not ticket_id or not body:
                 return {"error": "ticket_id and body required for reply"}
-            data = {
-                "body": body.strip(),
-                "from_email": pl.get("from_email") or f"helpdesk@{FRESHSERVICE_DOMAIN}",
-            }
-            for k in ("user_id", "cc_emails", "bcc_emails"):
-                if k in pl:
-                    data[k] = pl[k]
+            # from_email is only sent when explicitly provided. Letting
+            # Freshservice fall back to the account's default support email
+            # avoids HTTP 400 from passing a non-configured address.
+            attachment_paths = pl.get("attachments")
+            if isinstance(attachment_paths, str):
+                attachment_paths = [attachment_paths]
             try:
-                resp = await api_post(f"tickets/{ticket_id}/reply", json=data)
+                if attachment_paths:
+                    files = build_attachment_parts(attachment_paths)
+                    form: List[Tuple[str, str]] = [("body", body.strip())]
+                    if "from_email" in pl:
+                        form.append(("from_email", str(pl["from_email"])))
+                    if "user_id" in pl:
+                        form.append(("user_id", str(pl["user_id"])))
+                    for email in pl.get("cc_emails") or []:
+                        form.append(("cc_emails[]", str(email)))
+                    for email in pl.get("bcc_emails") or []:
+                        form.append(("bcc_emails[]", str(email)))
+                    resp = await api_post_multipart(
+                        f"tickets/{ticket_id}/reply", data=form, files=files,
+                    )
+                else:
+                    data = {"body": body.strip()}
+                    for k in ("from_email", "user_id", "cc_emails", "bcc_emails"):
+                        if k in pl:
+                            data[k] = pl[k]
+                    resp = await api_post(f"tickets/{ticket_id}/reply", json=data)
                 resp.raise_for_status()
                 return resp.json()
+            except FileNotFoundError as e:
+                return {"error": str(e)}
             except Exception as e:
                 return handle_error(e, "reply to ticket")
 
         if action == "add_note":
             if not ticket_id or not body:
                 return {"error": "ticket_id and body required for add_note"}
-            data = {"body": body}
-            if "private" in pl:
-                data["private"] = pl["private"]
+            attachment_paths = pl.get("attachments")
+            if isinstance(attachment_paths, str):
+                attachment_paths = [attachment_paths]
             try:
-                resp = await api_post(f"tickets/{ticket_id}/notes", json=data)
+                if attachment_paths:
+                    files = build_attachment_parts(attachment_paths)
+                    form = [("body", body)]
+                    if "private" in pl:
+                        form.append(("private", str(bool(pl["private"])).lower()))
+                    resp = await api_post_multipart(
+                        f"tickets/{ticket_id}/notes", data=form, files=files,
+                    )
+                else:
+                    data = {"body": body}
+                    if "private" in pl:
+                        data["private"] = pl["private"]
+                    resp = await api_post(f"tickets/{ticket_id}/notes", json=data)
                 resp.raise_for_status()
                 return resp.json()
+            except FileNotFoundError as e:
+                return {"error": str(e)}
             except Exception as e:
                 return handle_error(e, "add ticket note")
 
@@ -613,7 +648,13 @@ def register_tickets_tools(mcp) -> None:  # noqa: C901
           - source: ticket source enum (create)
           - custom_fields: dict of custom field values (create/update)
           - from_email, user_id, cc_emails, bcc_emails (reply)
-          - private (add_note)
+              from_email is OPTIONAL: omit it and Freshservice uses the
+              account's default support email. Only pass it if it is a
+              configured support address — an arbitrary value will 400.
+          - private (add_note): True = internal/agent-only note
+          - attachments (reply/add_note): local file path string or list
+              of paths. Sent as multipart/form-data. Freshservice caps:
+              15 files / 40 MB total.
           - due_date, notify_before, group_id, agent_id (add_task/update_task)
           - te_agent_id (add_time_entry — REQUIRED in payload)
           - executed_at, task_id, billable, timer_running (time entries)

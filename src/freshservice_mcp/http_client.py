@@ -1,8 +1,11 @@
 """Freshservice MCP — Shared HTTP client utilities."""
-import re
 import base64
+import mimetypes
+import os
+import re
+from typing import Any, Dict, List, Optional, Tuple
+
 import httpx
-from typing import Optional, Dict, Any
 
 from .config import FRESHSERVICE_DOMAIN, FRESHSERVICE_APIKEY
 
@@ -27,6 +30,46 @@ def get_auth_headers_readonly() -> Dict[str, str]:
     that include Content-Type: application/json.
     """
     return {"Authorization": _auth_header()}
+
+
+def get_auth_headers_multipart() -> Dict[str, str]:
+    """Auth headers WITHOUT Content-Type so httpx sets the multipart boundary."""
+    return {"Authorization": _auth_header()}
+
+
+def build_attachment_parts(
+    paths: List[str],
+) -> List[Tuple[str, Tuple[str, bytes, str]]]:
+    """Build httpx multipart parts for Freshservice ``attachments[]`` uploads.
+
+    Returns a list of ``("attachments[]", (filename, bytes, content_type))``
+    tuples. Raises FileNotFoundError if any path is missing.
+
+    Freshservice limits: up to 15 files and 40 MB total per request.
+    """
+    parts: List[Tuple[str, Tuple[str, bytes, str]]] = []
+    for path in paths:
+        if not os.path.isfile(path):
+            raise FileNotFoundError(f"Attachment not found: {path}")
+        content_type = mimetypes.guess_type(path)[0] or "application/octet-stream"
+        with open(path, "rb") as fh:
+            parts.append(("attachments[]", (os.path.basename(path), fh.read(), content_type)))
+    return parts
+
+
+async def api_post_multipart(
+    path: str,
+    data: List[Tuple[str, str]],
+    files: List[Tuple[str, Tuple[str, bytes, str]]],
+) -> httpx.Response:
+    """POST to Freshservice as multipart/form-data (for attachment uploads)."""
+    async with httpx.AsyncClient() as client:
+        return await client.post(
+            api_url(path),
+            headers=get_auth_headers_multipart(),
+            data=data,
+            files=files,
+        )
 
 
 def parse_link_header(link_header: str) -> Dict[str, Optional[int]]:
