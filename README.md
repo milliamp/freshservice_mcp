@@ -10,126 +10,136 @@ A powerful MCP (Model Context Protocol) server implementation that seamlessly in
 
 - **Enterprise-Grade Freshservice Integration**: Direct, secure communication with Freshservice API endpoints
 - **AI Model Compatibility**: Enables Claude and other AI models to execute service desk operations through Freshservice
-- **Modular Architecture**: 35 tools organized into 13 independently loadable scopes — load only what you need
+- **Modular Architecture**: 71 tools organized into 19 independently loadable scopes — load only what you need
+- **Read/Manage Permission Split**: Every resource exposes a `read_*` and `manage_*` pair so MCP clients can grant read-only or read-write access independently
+- **Consolidated Sub-Entities**: Ticket / problem / release sub-entities (notes, tasks, time entries, approvals) are dispatched through their parent tool rather than separate tools, keeping the tool surface small
 - **Scope-Based Loading**: Use `FRESHSERVICE_SCOPES` env var or `--scope` CLI arg to control which tool modules are active
 - **Dynamic Form Discovery**: Auto-discover custom fields for tickets, changes, problems, releases, assets
-- **Workflow Acceleration**: Reduce manual intervention in routine IT service tasks
 
 ## Architecture
 
-The server uses a modular scope-based architecture. Each scope registers one or more tools:
+The server uses a modular scope-based architecture. Each scope exposes one or more `read_*` / `manage_*` tool pairs. Read-only tools accept `get / list / filter / view / get_fields`-style actions; manage tools accept create/update/delete/etc. Tools share a private handler so the two halves stay in sync — the wrappers only enforce the action whitelist.
 
-| Scope | Tools | Description |
-| ----- | ----- | ----------- |
-| `tickets` | `manage_ticket`, `manage_ticket_conversation`, `manage_service_catalog` | Ticket CRUD, conversations, service catalog |
-| `changes` | `manage_change`, `manage_change_note`, `manage_change_task`, `manage_change_time_entry`, `manage_change_approval` | Change requests with full sub-resource support |
-| `problems` | `manage_problem`, `manage_problem_note`, `manage_problem_task`, `manage_problem_time_entry` | Problem management with notes, tasks, time tracking |
-| `releases` | `manage_release`, `manage_release_note`, `manage_release_task`, `manage_release_time_entry` | Release management with notes, tasks, time tracking |
-| `assets` | `manage_asset`, `manage_asset_details`, `manage_asset_relationship` | Assets/CMDB, types, components, relationships |
-| `status_page` | `manage_status_page` | Status pages, maintenance windows, incidents, components |
-| `departments` | `manage_department`, `manage_location` | Department & location management |
-| `agents` | `manage_agent`, `manage_agent_group` | Agent & agent group management |
-| `requesters` | `manage_requester`, `manage_requester_group` | Requester & requester group management |
-| `solutions` | `manage_solution` | Solution categories, folders, articles |
-| `projects` | `manage_project`, `manage_project_task` | Project management (NewGen) — tasks, members, associations, sprints |
-| `products` | `manage_product` | Product catalog management |
-| `misc` | `manage_canned_response`, `manage_workspace` | Canned responses, workspaces |
+| Scope | Tools (read / manage) | Notes |
+| ----- | --------------------- | ----- |
+| `tickets` | `read_ticket` / `manage_ticket`, `read_service_catalog` / `manage_service_catalog` | Ticket CRUD **plus** conversations, tasks, time entries, approvals (consolidated under `read_ticket` / `manage_ticket`). Service catalog stays separate. |
+| `changes` | `read_change` / `manage_change`, `read_change_note` / `manage_change_note`, `read_change_task` / `manage_change_task`, `read_change_time_entry` / `manage_change_time_entry`, `read_change_approval` / `manage_change_approval` | Change requests. Sub-entities stay separate here — `manage_change` already carries 26 planning fields. |
+| `problems` | `read_problem` / `manage_problem` | Problems CRUD plus notes, tasks, time entries — all consolidated. |
+| `releases` | `read_release` / `manage_release` | Releases CRUD plus notes, tasks, time entries — all consolidated. |
+| `assets` | `read_asset` / `manage_asset`, `read_asset_details`, `read_asset_relationship` / `manage_asset_relationship` | Assets/CMDB, types, sub-resource details (no writes), relationships. |
+| `status_page` | `read_status_page` / `manage_status_page`, `read_maintenance_window` / `manage_maintenance_window` | Status pages, maintenance windows, incidents, components, subscribers. |
+| `projects` | `read_project` / `manage_project`, `read_project_task` / `manage_project_task` | Project management (NewGen) — projects, members, associations, sprints, tasks. |
+| `departments` | `read_department` / `manage_department` | Departments. |
+| `locations` | `read_location` / `manage_location` | Locations. |
+| `agents` | `read_agent` / `manage_agent`, `read_agent_group` / `manage_agent_group` | Agents and groups. |
+| `requesters` | `read_requester` / `manage_requester`, `read_requester_group` / `manage_requester_group` | Requesters and groups. |
+| `solutions` | `read_solution` / `manage_solution` | KB categories, folders, articles. |
+| `products` | `read_product` / `manage_product` | Product catalog. |
+| `procurement` | `read_purchase_order` / `manage_purchase_order`, `read_vendor` / `manage_vendor` | Purchase orders and vendors. |
+| `contracts` | `read_contract` / `manage_contract` | Contracts and contract types. |
+| `software` | `read_software` / `manage_software` | Software assets and licenses. |
+| `announcements` | `read_announcement` / `manage_announcement` | Announcements. |
+| `custom_objects` | `read_custom_object` / `manage_custom_object` | Custom object schemas and records. |
+| `misc` | `read_canned_response`, `read_workspace`, `read_agent_role`, `read_business_hour`, `read_sla_policy`, `read_audit_log`, `read_alert` / `manage_alert`, `read_onboarding_request` / `manage_onboarding_request`, `read_offboarding_request` / `manage_offboarding_request` | Low-traffic resources. Several are read-only (no Freshservice write API). |
 
-Additionally, 2 **discovery tools** are always loaded:
+Additionally, 2 **discovery tools** are always loaded regardless of scope:
 
-- `discover_form_fields` — Discover custom field definitions for any entity type
+- `discover_form_fields` — Discover custom field definitions for any entity type (1-hour cache)
 - `clear_field_cache` — Clear cached field definitions
 
-**Total: 35 tools** (33 scoped + 2 discovery)
+**Total: 71 tools** (69 scoped + 2 discovery), 49 read + 42 manage.
 
 ## Tools Reference
 
-Each tool uses a unified `action` parameter to select the operation. Pass the action as the first argument along with the relevant parameters.
+Every tool uses a unified `action` parameter to select the operation. The action whitelist is enforced inside each tool — `read_*` accepts read actions, `manage_*` accepts write actions, and the rejection message tells the LLM which counterpart to call.
 
 ### Ticket Management (`tickets` scope)
 
-**`manage_ticket`** — Actions: `list`, `get`, `create`, `update`, `delete`, `filter`, `get_fields`
+**`read_ticket`** — Actions: `get`, `list`, `filter`, `get_fields`, `list_conversations`, `list_tasks`, `get_task`, `list_time_entries`, `get_time_entry`, `list_approvals`, `get_approval`
 
-| Action | Required Parameters | Optional Parameters |
-| ------ | ------------------- | ------------------- |
-| `list` | — | `page`, `per_page` |
-| `get` | `ticket_id` | `include` |
-| `create` | `subject`, `description`, `email`, `priority`, `status` | `source`, `type`, `group_id`, `agent_id`, `custom_fields` |
-| `update` | `ticket_id` | any updatable field |
-| `delete` | `ticket_id` | — |
-| `filter` | `query` | `page`, `per_page` |
+**`manage_ticket`** — Actions: `create`, `update`, `delete`, `reply`, `add_note`, `update_conversation`, `add_task`, `update_task`, `delete_task`, `add_time_entry`, `update_time_entry`, `delete_time_entry`, `add_approval`, `approve`, `reject`, `remind`
 
-**`manage_ticket_conversation`** — Actions: `list`, `create_reply`, `create_note`
+| Action | Required | Notes |
+| ------ | -------- | ----- |
+| `create` | `subject`, `description`, (`email` OR `requester_id`) | Source / priority / status default if omitted; long-tail via `payload`. |
+| `update` / `delete` | `ticket_id` | |
+| `reply` / `add_note` | `ticket_id`, `body` | `payload.cc_emails`, `payload.bcc_emails`, `payload.private` etc. |
+| `add_task` | `ticket_id`, `title` | Optional: `description`, `status`, `payload.{due_date, notify_before, group_id, agent_id}` |
+| `update_task` / `delete_task` | `ticket_id`, `task_id` | |
+| `add_time_entry` | `ticket_id`, `time_spent`, `payload.te_agent_id` | `body` becomes the work note; `payload.billable`, `payload.executed_at` etc. |
+| `add_approval` | `ticket_id`, `approver_id` | `payload.approval_type`, `payload.email_content` |
+| `approve` / `reject` / `remind` | `ticket_id`, `approval_id` | |
 
-**`manage_service_catalog`** — Actions: `list`, `get`
+**`read_service_catalog`** — Actions: `list_items`, `get_requested_items`. **`manage_service_catalog`** — Action: `place_request`.
 
 ### Change Management (`changes` scope)
 
-**`manage_change`** — Actions: `list`, `get`, `create`, `update`, `delete`, `close`, `filter`, `move`, `get_fields`
+Change family stays as separate sub-entity tools (unlike ticket/problem/release) because `manage_change` itself already carries 26 planning fields — merging the sub-entities would push the parameter surface past the point an LLM can handle reliably.
 
-| Action | Required Parameters | Optional Parameters |
-| ------ | ------------------- | ------------------- |
+**`read_change`** — Actions: `get`, `list`, `filter`, `get_fields`
+**`manage_change`** — Actions: `create`, `update`, `delete`, `close`, `move`
+
+| Action | Required | Notes |
+| ------ | -------- | ----- |
 | `create` | `requester_id`, `subject`, `description`, `priority`, `impact`, `status`, `risk`, `change_type` | `planning_fields`*, `assets`, `impacted_services`, `custom_fields`, `agent_id`, `group_id` |
 | `update` | `change_id` | any updatable field including `planning_fields`, `impacted_services` |
 | `close` | `change_id` | `body` (result explanation) |
+| `move` | `change_id` | move between workspaces |
 
 > *`planning_fields` on create are handled transparently via a 2-step process (POST + PUT) to work around a Freshservice API limitation.
 > **`impacted_services`** is distinct from `assets`: use `assets` for CI associations (`[{"display_id": N}]`) and `impacted_services` for business service impact declarations (`[{"id": N, "status": 1}]`). Service statuses: 1=Operational, 5=Under maintenance, 10=Degraded, 20=Partial outage, 30=Major outage.
 
-**`manage_change_note`** — Actions: `list`, `get`, `create`, `update`, `delete`
-
-**`manage_change_task`** — Actions: `list`, `get`, `create`, `update`, `delete`
-
-**`manage_change_time_entry`** — Actions: `list`, `get`, `create`, `update`, `delete`
-
-**`manage_change_approval`** — Actions: `list`, `get`, `approve`, `reject`
+- **`read_change_note`** / **`manage_change_note`** — list/view vs create/update/delete
+- **`read_change_task`** / **`manage_change_task`** — list/view vs create/update/delete
+- **`read_change_time_entry`** / **`manage_change_time_entry`** — list/view vs create/update/delete
+- **`read_change_approval`** / **`manage_change_approval`** — list_groups/list/view vs create_group/update_group/cancel_group/remind/cancel/set_chain_rule
 
 ### Problem Management (`problems` scope)
 
-**`manage_problem`** — Actions: `list`, `get`, `create`, `update`, `delete`, `filter`, `close`, `restore`, `get_fields`
+Problem family is fully consolidated — `read_problem` and `manage_problem` cover the parent plus notes, tasks, and time entries.
 
-| Action | Required Parameters | Optional Parameters |
-| ------ | ------------------- | ------------------- |
-| `create` | `requester_id`, `subject`, `description`, `priority`, `status`, `impact`, `due_by` | `agent_id`, `group_id`, `department_id`, `known_error`, `category`, `analysis_fields`, `assets`, `custom_fields` |
-| `close` | `problem_id` | — |
+**`read_problem`** — Actions: `get`, `list`, `filter`, `get_fields`, `list_notes`, `get_note`, `list_tasks`, `get_task`, `list_time_entries`, `get_time_entry`
+
+**`manage_problem`** — Actions: `create`, `update`, `delete`, `close`, `restore`, `add_note`, `update_note`, `delete_note`, `add_task`, `update_task`, `delete_task`, `add_time_entry`, `update_time_entry`, `delete_time_entry`
+
+| Action | Required | Notes |
+| ------ | -------- | ----- |
+| `create` | `requester_id`, `subject`, `description`, `priority`, `status`, `impact`, `due_by` | `payload.agent_id`, `payload.assets`, `payload.analysis_fields`, etc. |
+| `add_note` | `problem_id`, `body` | |
+| `add_task` | `problem_id`, `title` | Optional: `description`, `status`, `payload.{due_date, notify_before, group_id}` |
+| `add_time_entry` | `problem_id`, `time_spent` | `body` = work note; `payload.te_agent_id`, `payload.billable` etc. |
 
 Priority: 1=Low, 2=Medium, 3=High, 4=Urgent · Status: 1=Open, 2=Change Requested, 3=Closed · Impact: 1=Low, 2=Medium, 3=High
 
-**`manage_problem_note`** — Actions: `list`, `get`, `create`, `update`, `delete`
-
-**`manage_problem_task`** — Actions: `list`, `get`, `create`, `update`, `delete`
-
-**`manage_problem_time_entry`** — Actions: `list`, `get`, `create`, `update`, `delete`
-
 ### Release Management (`releases` scope)
 
-**`manage_release`** — Actions: `list`, `get`, `create`, `update`, `delete`, `filter`, `restore`, `get_fields`
+Release family is fully consolidated — `read_release` and `manage_release` cover the parent plus notes, tasks, and time entries.
 
-| Action | Required Parameters | Optional Parameters |
-| ------ | ------------------- | ------------------- |
-| `create` | `subject`, `description`, `priority`, `status`, `release_type`, `planned_start_date`, `planned_end_date` | `planning_fields`*, `agent_id`, `group_id`, `department_id`, `assets`, `custom_fields` |
+**`read_release`** — Actions: `get`, `list`, `filter`, `get_fields`, `list_notes`, `get_note`, `list_tasks`, `get_task`, `list_time_entries`, `get_time_entry`
 
-> *Like changes, `planning_fields` on create uses transparent 2-step handling.
+**`manage_release`** — Actions: `create`, `update`, `delete`, `restore`, `add_note`, `update_note`, `delete_note`, `add_task`, `update_task`, `delete_task`, `add_time_entry`, `update_time_entry`, `delete_time_entry`
+
+| Action | Required | Notes |
+| ------ | -------- | ----- |
+| `create` | `subject`, `description`, `priority`, `status`, `release_type`, `planned_start_date`, `planned_end_date` | `payload.planning_fields`* | `payload.{work_start_date, agent_id, assets, custom_fields, ...}` |
+| Sub-entity adds/updates | parent id + entity id | Same pattern as problems. |
+
+> *Like changes, `planning_fields` on create uses transparent 2-step handling (POST then PUT).
 
 Priority: 1=Low, 2=Medium, 3=High, 4=Urgent · Status: 1=Open, 2=On hold, 3=In Progress, 4=Incomplete, 5=Completed · Type: 1=Minor, 2=Standard, 3=Major, 4=Emergency
 
-**`manage_release_note`** — Actions: `list`, `get`, `create`, `update`, `delete`
-
-**`manage_release_task`** — Actions: `list`, `get`, `create`, `update`, `delete`
-
-**`manage_release_time_entry`** — Actions: `list`, `get`, `create`, `update`, `delete`
-
 ### Asset / CMDB Management (`assets` scope)
 
-**`manage_asset`** — Actions: `list`, `get`, `create`, `update`, `delete`, `delete_permanently`, `restore`, `search`, `filter`, `move`, `get_fields`
+**`read_asset`** — Actions: `list`, `get`, `search`, `filter`, `get_types`, `get_type`, `get_type_fields`
+**`manage_asset`** — Actions: `create`, `update`, `delete`, `delete_permanently`, `restore`, `move`, `create_type`
 
-**`manage_asset_details`** — Actions: `get_components`, `get_requests`, `get_contracts`, `get_installed_software`, `get_assignment_history`, `list_types`, `get_type`
+**`read_asset_details`** — Actions: `get_components`, `get_requests`, `get_contracts`, `get_installed_software`, `get_assignment_history` (no write counterpart — all sub-resource GETs)
 
-**`manage_asset_relationship`** — Actions: `list`, `list_all`, `get`, `create`, `delete`, `get_types`
+**`read_asset_relationship`** / **`manage_asset_relationship`** — list/list_all/get/get_types/job_status vs create/delete
 
 ### Status Page (`status_page` scope)
 
-**`manage_status_page`** — Maintenance windows, incidents, service components, and subscribers.
+**`read_status_page`** / **`manage_status_page`** — Maintenance windows, incidents, service components, and subscribers.
 
 All actions auto-discover `status_page_id` if omitted. Maintenance CRUD requires either `change_id` **or** `maintenance_window_id` as the source entity. Incident CRUD requires `ticket_id`.
 
@@ -140,7 +150,7 @@ All actions auto-discover `status_page_id` if omitted. Maintenance CRUD requires
 > 3. **If `maintenance_window` is empty `{}`** → create a MW with `manage_maintenance_window` action=`create` passing `change_id` (auto-associates the MW with the Change), then use the returned `maintenance_window_id` in `create_maintenance`
 > 4. Required fields for `create_maintenance`: `title`, `description`, `started_at`, `ended_at`, `impacted_services` (get component IDs via `list_components`)
 
-**`manage_maintenance_window`** — CRUD for Maintenance Windows. Pass `change_id` on create to auto-associate.
+**`read_maintenance_window`** / **`manage_maintenance_window`** — CRUD for Maintenance Windows. Pass `change_id` on create to auto-associate.
 
 | Action | Required Parameters |
 | ------ | ------------------- |
@@ -150,7 +160,7 @@ All actions auto-discover `status_page_id` if omitted. Maintenance CRUD requires
 | `update` | `maintenance_window_id` |
 | `delete` | `maintenance_window_id` |
 
-**`manage_status_page`** actions:
+**`manage_status_page`** / **`read_status_page`** actions:
 
 | Action | Required Parameters |
 | ------ | ------------------- |
@@ -192,7 +202,8 @@ Key fields: `started_at` (ISO datetime), `ended_at`, `impacted_services` (`[{id,
 
 ### Project Management (`projects` scope)
 
-**`manage_project`** — Actions: `create`, `update`, `get`, `list`, `delete`, `archive`, `restore`, `get_fields`, `get_templates`, `add_members`, `get_memberships`, `create_association`, `get_associations`, `delete_association`, `get_versions`, `get_sprints`
+**`read_project`** — Actions: `get`, `list`, `get_fields`, `get_templates`, `get_memberships`, `get_associations`, `get_versions`, `get_sprints`
+**`manage_project`** — Actions: `create`, `update`, `delete`, `archive`, `restore`, `add_members`, `create_association`, `delete_association`
 
 | Action | Required Parameters | Optional Parameters |
 | ------ | ------------------- | ------------------- |
@@ -213,7 +224,8 @@ Key fields: `started_at` (ISO datetime), `ended_at`, `impacted_services` (`[{id,
 
 Priority: 1=Low, 2=Medium, 3=High, 4=Urgent · Status: 1=Yet to start, 2=In Progress, 3=Completed · Visibility: 0=Private, 1=Public
 
-**`manage_project_task`** — Actions: `create`, `update`, `get`, `list`, `filter`, `delete`, `get_task_types`, `get_task_type_fields`, `get_task_statuses`, `get_task_priorities`, `create_note`, `list_notes`, `update_note`, `delete_note`, `create_association`, `get_associations`, `delete_association`
+**`read_project_task`** — Actions: `get`, `list`, `filter`, `get_task_types`, `get_task_type_fields`, `get_task_statuses`, `get_task_priorities`, `list_notes`, `get_associations`
+**`manage_project_task`** — Actions: `create`, `update`, `delete`, `create_note`, `update_note`, `delete_note`, `create_association`, `delete_association`
 
 | Action | Required Parameters | Optional Parameters |
 | ------ | ------------------- | ------------------- |
@@ -236,31 +248,37 @@ Priority: 1=Low, 2=Medium, 3=High, 4=Urgent · Status: 1=Yet to start, 2=In Prog
 
 > Use `get_task_types` to discover available type_ids before creating tasks. The task UPDATE endpoint uses a singular path (`/task/` instead of `/tasks/`) — this is handled automatically.
 
-### Departments & Locations (`departments` scope)
+### Departments & Locations
 
-**`manage_department`** — Actions: `list`, `get`, `create`, `update`, `delete`, `filter`, `get_fields`
+`departments` scope: **`read_department`** / **`manage_department`** — list/get/filter/get_fields vs create/update/delete
 
-**`manage_location`** — Actions: `list`, `get`, `create`, `update`, `delete`, `filter`
+`locations` scope: **`read_location`** / **`manage_location`** — list/get/filter vs create/update/delete
 
 ### Agents & Requesters (`agents` / `requesters` scopes)
 
-**`manage_agent`** — Actions: `list`, `get`, `create`, `update`, `delete`, `filter`
+- **`read_agent`** / **`manage_agent`** — list/get/filter/get_fields vs create/update
+- **`read_agent_group`** / **`manage_agent_group`** — list/get vs create/update
+- **`read_requester`** / **`manage_requester`** — list/get/filter/get_fields vs create/update/add_to_group
+- **`read_requester_group`** / **`manage_requester_group`** — list/get/list_members vs create/update
 
-**`manage_agent_group`** — Actions: `list`, `get`, `create`, `update`, `delete`
+### Solutions, Products, Procurement, Contracts, Software, Announcements, Custom Objects
 
-**`manage_requester`** — Actions: `list`, `get`, `create`, `update`, `delete`, `filter`, `merge`, `convert_to_agent`
+- `solutions`: **`read_solution`** / **`manage_solution`** — list/get categories/folders/articles vs create/update/publish
+- `products`: **`read_product`** / **`manage_product`** — list/get vs create/update
+- `procurement`: **`read_purchase_order`** / **`manage_purchase_order`**, **`read_vendor`** / **`manage_vendor`**
+- `contracts`: **`read_contract`** / **`manage_contract`** — list/get/get_types/get_type/get_type_fields vs create/update/delete
+- `software`: **`read_software`** / **`manage_software`** — list/get/list_licenses vs create/update
+- `announcements`: **`read_announcement`** / **`manage_announcement`** — list/get vs create/update/delete
+- `custom_objects`: **`read_custom_object`** / **`manage_custom_object`** — list_objects/get_object/list_records/get_record vs create_record/update_record/delete_record
 
-**`manage_requester_group`** — Actions: `list`, `get`, `create`, `update`, `delete`
+### Miscellaneous (`misc` scope)
 
-### Solutions, Products, Misc (`solutions` / `products` / `misc` scopes)
+Lower-traffic resources. Several have no Freshservice write API and are read-only:
 
-**`manage_solution`** — Actions: `list_categories`, `get_category`, `create_category`, `update_category`, `delete_category`, `list_folders`, `get_folder`, `create_folder`, `update_folder`, `delete_folder`, `list_articles`, `get_article`, `create_article`, `update_article`, `delete_article`
-
-**`manage_product`** — Actions: `list`, `get`, `create`, `update`, `delete`
-
-**`manage_canned_response`** — Actions: `list_folders`, `get_folder`, `list_responses`, `get_response`
-
-**`manage_workspace`** — Actions: `list`, `get`
+- **`read_canned_response`**, **`read_workspace`**, **`read_agent_role`**, **`read_business_hour`**, **`read_sla_policy`**, **`read_audit_log`** — read-only (no manage counterpart)
+- **`read_alert`** / **`manage_alert`** — list/get vs delete
+- **`read_onboarding_request`** / **`manage_onboarding_request`** — list/get/get_tickets/get_fields vs create
+- **`read_offboarding_request`** / **`manage_offboarding_request`** — list/get/get_fields vs create
 
 ### Query Syntax for Filtering
 
@@ -357,7 +375,7 @@ Add to `.vscode/mcp.json` in your workspace:
 
 ### Scope Selection
 
-By default all 13 scopes are loaded (33 scoped tools + 2 discovery = 35 tools). To load only specific scopes:
+By default all 19 scopes are loaded (69 scoped tools + 2 discovery = 71 tools, made up of 49 `read_*` + 42 `manage_*`). To load only specific scopes:
 
 **Via environment variable:**
 
