@@ -29,7 +29,7 @@ from ..http_client import (
     handle_error,
     parse_link_header,
 )
-from ._split import reject_unless_in
+from ._split import normalize_action, reject_unless_in
 
 
 def _validate_pagination(page: int, per_page: int) -> Optional[Dict[str, Any]]:
@@ -485,7 +485,7 @@ def register_tickets_tools(mcp) -> None:  # noqa: C901
 
     @mcp.tool()
     async def read_ticket(
-        action: str,
+        action: Optional[str] = None,
         ticket_id: Optional[int] = None,
         task_id: Optional[int] = None,
         time_entry_id: Optional[int] = None,
@@ -504,6 +504,9 @@ def register_tickets_tools(mcp) -> None:  # noqa: C901
           list_time_entries, get_time_entry,
           list_approvals, get_approval
 
+        Synonyms accepted: view/show/read → get, find/search → filter,
+        index/all → list.
+
         Required per action:
           get: ticket_id
           filter: query
@@ -514,13 +517,14 @@ def register_tickets_tools(mcp) -> None:  # noqa: C901
 
         Optional: page, per_page (list/filter), workspace_id (filter).
 
+        Default action: if not provided, inferred from params —
+          ticket_id → get, query → filter, otherwise list.
+
         Notes:
-          - get auto-enriches the response with: stats + requester (native
-            ?include= on the main fetch), plus parallel sub-fetches for
-            tasks and approvals, plus requested_items (incl. each item's
-            custom_fields) when the ticket type is Service Request. A
-            failed sub-fetch surfaces as _<key>_warning rather than failing
-            the whole call.
+          - get auto-enriches with stats + requester (native ?include= on
+            the main fetch), plus parallel sub-fetches for tasks, approvals,
+            and (on Service Requests) requested_items with their
+            custom_fields. Failed sub-fetches surface as _<key>_warning.
           - get_fields returns ticket form fields incl. instance-specific
             status/priority choices — call before filter.
           - filter: query is URL-encoded and wrapped in double quotes.
@@ -528,7 +532,15 @@ def register_tickets_tools(mcp) -> None:  # noqa: C901
             Relational: :>, :<. Null: field:null.
             Example: "agent_id:120002355359 AND status:2"
         """
-        action = action.lower().strip()
+        action = normalize_action(action)
+        if not action:
+            # Smart default: infer from which params the caller supplied.
+            if ticket_id:
+                action = "get"
+            elif query:
+                action = "filter"
+            else:
+                action = "list"
         err = reject_unless_in(action, _READ_TICKET, "read_ticket", "manage_ticket")
         if err:
             return err
@@ -607,7 +619,7 @@ def register_tickets_tools(mcp) -> None:  # noqa: C901
           - executed_at, task_id, billable, timer_running (time entries)
           - approval_type, email_content (add_approval)
         """
-        action = action.lower().strip()
+        action = normalize_action(action)
         err = reject_unless_in(action, _WRITE_TICKET, "manage_ticket", "read_ticket")
         if err:
             return err
@@ -701,7 +713,7 @@ def register_tickets_tools(mcp) -> None:  # noqa: C901
           get_requested_items: ticket_id
         Optional: page, per_page (list_items).
         """
-        action = action.lower().strip()
+        action = normalize_action(action)
         err = reject_unless_in(action, _READ_SERVICE_CATALOG, "read_service_catalog", "manage_service_catalog")
         if err:
             return err
@@ -725,7 +737,7 @@ def register_tickets_tools(mcp) -> None:  # noqa: C901
           place_request: display_id, email
         Optional: requested_for (target user email), quantity (default 1).
         """
-        action = action.lower().strip()
+        action = normalize_action(action)
         err = reject_unless_in(action, _WRITE_SERVICE_CATALOG, "manage_service_catalog", "read_service_catalog")
         if err:
             return err

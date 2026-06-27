@@ -58,7 +58,7 @@ from ..http_client import (
     gather_enrichments,
     handle_error,
 )
-from ._split import reject_unless_in
+from ._split import normalize_action, reject_unless_in
 
 # Module-level caches for auto-discovered IDs
 _cached_workspace_id: Optional[int] = None
@@ -659,7 +659,7 @@ def register_status_page_tools(mcp) -> None:  # noqa: C901
           - Failed sub-fetches surface as _<key>_warning rather than failing
             the whole call.
         """
-        action = action.lower().strip()
+        action = normalize_action(action)
         err = reject_unless_in(action, _READ_STATUS_PAGE, "read_status_page", "manage_status_page")
         if err:
             return err
@@ -731,7 +731,7 @@ def register_status_page_tools(mcp) -> None:  # noqa: C901
           20=PartialOut, 30=MajorOut. notifications.trigger 1=OnStart, 2=Before,
           3=OnComplete. subscriber_type 1=External, 2=Agent, 3=Requester.
         """
-        action = action.lower().strip()
+        action = normalize_action(action)
         err = reject_unless_in(action, _WRITE_STATUS_PAGE, "manage_status_page", "read_status_page")
         if err:
             return err
@@ -1006,7 +1006,7 @@ def register_status_page_tools(mcp) -> None:  # noqa: C901
           - get auto-enriches with the associated change object when the MW
             is linked to one. Failed enrichment surfaces as _change_warning.
         """
-        action = action.lower().strip()
+        action = normalize_action(action)
         err = reject_unless_in(action, _READ_MAINTENANCE_WINDOW, "read_maintenance_window", "manage_maintenance_window")
         if err:
             return err
@@ -1052,7 +1052,7 @@ def register_status_page_tools(mcp) -> None:  # noqa: C901
         30=Major outage. notifications trigger 1=On start, 2=Before start,
         3=On complete. Component IDs via read_status_page list_components.
         """
-        action = action.lower().strip()
+        action = normalize_action(action)
         err = reject_unless_in(action, _WRITE_MAINTENANCE_WINDOW, "manage_maintenance_window", "read_maintenance_window")
         if err:
             return err

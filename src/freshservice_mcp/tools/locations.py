@@ -9,7 +9,7 @@ Tools:
 from typing import Any, Dict, Optional
 
 from ..http_client import api_delete, api_get, api_post, api_put, handle_error
-from ._split import reject_unless_in
+from ._split import normalize_action, reject_unless_in
 
 
 def register_locations_tools(mcp) -> None:
@@ -148,7 +148,7 @@ def register_locations_tools(mcp) -> None:
 
         Optional: page, per_page.
         """
-        action = action.lower().strip()
+        action = normalize_action(action)
         err = reject_unless_in(action, _READ_LOCATION, "read_location", "manage_location")
         if err:
             return err
@@ -184,7 +184,7 @@ def register_locations_tools(mcp) -> None:
         Optional: line1, line2, city, state, country, zipcode (address);
         contact_name, email, phone, parent_location_id.
         """
-        action = action.lower().strip()
+        action = normalize_action(action)
         err = reject_unless_in(action, _WRITE_LOCATION, "manage_location", "read_location")
         if err:
             return err

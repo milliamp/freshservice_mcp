@@ -23,7 +23,7 @@ from ..http_client import (
     api_delete, api_get, api_post, api_put,
     get_auth_headers, handle_error,
 )
-from ._split import reject_unless_in
+from ._split import normalize_action, reject_unless_in
 
 # Base path for NewGen project management
 _PM = "pm/projects"
@@ -336,7 +336,7 @@ def register_project_tools(mcp) -> None:  # noqa: C901
         Optional: filter (list: completed|incomplete|archived|open|in_progress),
         page, per_page.
         """
-        action = action.lower().strip()
+        action = normalize_action(action)
         err = reject_unless_in(action, _READ_PROJECT, "read_project", "manage_project")
         if err:
             return err
@@ -396,7 +396,7 @@ def register_project_tools(mcp) -> None:  # noqa: C901
           manager_id, start_date, end_date, sprint_duration, custom_fields,
           project_template_id (create only).
         """
-        action = action.lower().strip()
+        action = normalize_action(action)
         err = reject_unless_in(action, _WRITE_PROJECT, "manage_project", "read_project")
         if err:
             return err
@@ -746,7 +746,7 @@ def register_project_tools(mcp) -> None:  # noqa: C901
 
         Optional: filter (list), page, per_page.
         """
-        action = action.lower().strip()
+        action = normalize_action(action)
         err = reject_unless_in(action, _READ_PROJECT_TASK, "read_project_task", "manage_project_task")
         if err:
             return err
@@ -814,7 +814,7 @@ def register_project_tools(mcp) -> None:  # noqa: C901
         planned_effort (e.g. '1w 2d 3h 4m'), story_points, sprint_id,
         version_id, custom_fields.
         """
-        action = action.lower().strip()
+        action = normalize_action(action)
         err = reject_unless_in(action, _WRITE_PROJECT_TASK, "manage_project_task", "read_project_task")
         if err:
             return err

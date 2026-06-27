@@ -17,7 +17,7 @@ from ..http_client import (
     gather_enrichments,
     handle_error,
 )
-from ._split import reject_unless_in
+from ._split import normalize_action, reject_unless_in
 
 
 def register_problem_tools(mcp) -> None:  # noqa: C901
@@ -400,7 +400,7 @@ def register_problem_tools(mcp) -> None:  # noqa: C901
 
     @mcp.tool()
     async def read_problem(
-        action: str,
+        action: Optional[str] = None,
         problem_id: Optional[int] = None,
         note_id: Optional[int] = None,
         task_id: Optional[int] = None,
@@ -417,6 +417,9 @@ def register_problem_tools(mcp) -> None:  # noqa: C901
           list_tasks, get_task,
           list_time_entries, get_time_entry
 
+        Synonyms accepted: view/show/read → get, find/search → filter,
+        index/all → list.
+
         Required per action:
           get: problem_id
           filter: query
@@ -427,11 +430,21 @@ def register_problem_tools(mcp) -> None:  # noqa: C901
 
         Optional: page, per_page (list/filter).
 
+        Default action: if not provided, inferred from params —
+          problem_id → get, query → filter, otherwise list.
+
         Notes:
           - get auto-enriches with notes and tasks (parallel sub-fetches).
             Failed sub-fetches surface as _<key>_warning.
         """
-        action = action.lower().strip()
+        action = normalize_action(action)
+        if not action:
+            if problem_id:
+                action = "get"
+            elif query:
+                action = "filter"
+            else:
+                action = "list"
         err = reject_unless_in(action, _READ_PROBLEM, "read_problem", "manage_problem")
         if err:
             return err
@@ -504,7 +517,7 @@ def register_problem_tools(mcp) -> None:  # noqa: C901
           - due_date, notify_before, group_id (task)
           - te_agent_id, executed_at, task_id, billable (time entry)
         """
-        action = action.lower().strip()
+        action = normalize_action(action)
         err = reject_unless_in(action, _WRITE_PROBLEM, "manage_problem", "read_problem")
         if err:
             return err

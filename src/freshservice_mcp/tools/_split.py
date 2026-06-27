@@ -9,6 +9,49 @@ read-write permissions independently.
 from typing import Any, Dict, Iterable, Optional
 
 
+# Common natural-language synonyms LLMs reach for when they don't know the
+# canonical verb. Normalized at the wrapper layer so callers can use the
+# verb they expect; the handler dispatch only ever sees the canonical name.
+_SYNONYMS: Dict[str, str] = {
+    # read aliases
+    "view": "get",
+    "show": "get",
+    "read": "get",
+    "fetch": "get",
+    "retrieve": "get",
+    "describe": "get",
+    # list aliases
+    "index": "list",
+    "all": "list",
+    "list_all": "list",
+    "enumerate": "list",
+    # filter aliases
+    "find": "filter",
+    "search": "filter",
+    "query": "filter",
+    # write aliases
+    "add": "create",
+    "new": "create",
+    "modify": "update",
+    "edit": "update",
+    "patch": "update",
+    "remove": "delete",
+    "destroy": "delete",
+}
+
+
+def normalize_action(action: Optional[str]) -> str:
+    """Lowercase, strip, and map common synonyms to canonical names.
+
+    Returns an empty string if ``action`` is None/non-str so callers can
+    then apply their own smart-default logic.
+    """
+    if not isinstance(action, str):
+        return ""
+    a = action.lower().strip()
+    return _SYNONYMS.get(a, a)
+
+
 def reject_unless_in(
     action: str,
     allowed: Iterable[str],

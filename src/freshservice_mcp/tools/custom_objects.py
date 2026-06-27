@@ -18,7 +18,7 @@ from ..http_client import (
     handle_error,
     parse_link_header,
 )
-from ._split import reject_unless_in
+from ._split import normalize_action, reject_unless_in
 
 
 def register_custom_objects_tools(mcp) -> None:
@@ -158,7 +158,7 @@ def register_custom_objects_tools(mcp) -> None:
 
         Optional: page, per_page (list_objects, list_records).
         """
-        action = action.lower().strip()
+        action = normalize_action(action)
         err = reject_unless_in(action, _READ_CUSTOM_OBJECT, "read_custom_object", "manage_custom_object")
         if err:
             return err
@@ -180,7 +180,7 @@ def register_custom_objects_tools(mcp) -> None:
           update_record: type_id, record_id, data
           delete_record: type_id, record_id
         """
-        action = action.lower().strip()
+        action = normalize_action(action)
         err = reject_unless_in(action, _WRITE_CUSTOM_OBJECT, "manage_custom_object", "read_custom_object")
         if err:
             return err

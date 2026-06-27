@@ -10,7 +10,7 @@ Tools:
 from typing import Any, Dict, List, Optional
 
 from ..http_client import api_get, api_post, api_put, handle_error, parse_link_header
-from ._split import reject_unless_in
+from ._split import normalize_action, reject_unless_in
 
 
 def register_requesters_tools(mcp) -> None:
@@ -184,7 +184,7 @@ def register_requesters_tools(mcp) -> None:
 
         Optional: include_agents (filter), page, per_page (list).
         """
-        action = action.lower().strip()
+        action = normalize_action(action)
         err = reject_unless_in(action, _READ_REQUESTER, "read_requester", "manage_requester")
         if err:
             return err
@@ -232,7 +232,7 @@ def register_requesters_tools(mcp) -> None:
         location_id, background_information, custom_fields,
         can_see_all_tickets_from_associated_departments.
         """
-        action = action.lower().strip()
+        action = normalize_action(action)
         err = reject_unless_in(action, _WRITE_REQUESTER, "manage_requester", "read_requester")
         if err:
             return err
@@ -342,7 +342,7 @@ def register_requesters_tools(mcp) -> None:
 
         Optional: page, per_page (list).
         """
-        action = action.lower().strip()
+        action = normalize_action(action)
         err = reject_unless_in(action, _READ_REQUESTER_GROUP, "read_requester_group", "manage_requester_group")
         if err:
             return err
@@ -365,7 +365,7 @@ def register_requesters_tools(mcp) -> None:
 
         Optional: description.
         """
-        action = action.lower().strip()
+        action = normalize_action(action)
         err = reject_unless_in(action, _WRITE_REQUESTER_GROUP, "manage_requester_group", "read_requester_group")
         if err:
             return err

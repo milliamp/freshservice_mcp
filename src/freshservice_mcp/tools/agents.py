@@ -10,7 +10,7 @@ Tools:
 from typing import Any, Dict, List, Optional
 
 from ..http_client import api_get, api_post, api_put, handle_error, parse_link_header
-from ._split import reject_unless_in
+from ._split import normalize_action, reject_unless_in
 
 
 def register_agents_tools(mcp) -> None:
@@ -181,7 +181,7 @@ def register_agents_tools(mcp) -> None:
 
         Optional: page, per_page (list).
         """
-        action = action.lower().strip()
+        action = normalize_action(action)
         err = reject_unless_in(action, _READ_AGENT, "read_agent", "manage_agent")
         if err:
             return err
@@ -225,7 +225,7 @@ def register_agents_tools(mcp) -> None:
         time_zone, time_format, language, location_id, background_information,
         scoreboard_level_id, can_see_all_tickets_from_associated_departments.
         """
-        action = action.lower().strip()
+        action = normalize_action(action)
         err = reject_unless_in(action, _WRITE_AGENT, "manage_agent", "read_agent")
         if err:
             return err
@@ -323,7 +323,7 @@ def register_agents_tools(mcp) -> None:
         Required per action:
           get: group_id
         """
-        action = action.lower().strip()
+        action = normalize_action(action)
         err = reject_unless_in(action, _READ_AGENT_GROUP, "read_agent_group", "manage_agent_group")
         if err:
             return err
@@ -353,7 +353,7 @@ def register_agents_tools(mcp) -> None:
         unassigned_for (e.g. '30m', '1h'), group_fields (alt fields dict
         for update).
         """
-        action = action.lower().strip()
+        action = normalize_action(action)
         err = reject_unless_in(action, _WRITE_AGENT_GROUP, "manage_agent_group", "read_agent_group")
         if err:
             return err

@@ -30,7 +30,7 @@ from ..http_client import (
     handle_error,
     parse_link_header,
 )
-from ._split import reject_unless_in
+from ._split import normalize_action, reject_unless_in
 
 
 def register_assets_tools(mcp) -> None:
@@ -328,7 +328,7 @@ def register_assets_tools(mcp) -> None:
 
     @mcp.tool()
     async def read_asset(
-        action: str,
+        action: Optional[str] = None,
         display_id: Optional[int] = None,
         asset_type_id: Optional[int] = None,
         search_query: Optional[str] = None,
@@ -345,6 +345,9 @@ def register_assets_tools(mcp) -> None:
 
         Actions: list, get, search, filter, get_types, get_type, get_type_fields
 
+        Synonyms accepted: view/show/read → get, find → filter,
+        index/all → list.
+
         Required per action:
           get: display_id
           search: search_query (name/tag/serial)
@@ -353,8 +356,23 @@ def register_assets_tools(mcp) -> None:
 
         Optional: include (e.g. 'type_fields'), order_by, order_type,
         trashed, workspace_id, page, per_page.
+
+        Default action: if not provided, inferred from params —
+          display_id → get, search_query → search,
+          filter_query → filter, asset_type_id → get_type, else list.
         """
-        action = action.lower().strip()
+        action = normalize_action(action)
+        if not action:
+            if display_id:
+                action = "get"
+            elif search_query:
+                action = "search"
+            elif filter_query:
+                action = "filter"
+            elif asset_type_id:
+                action = "get_type"
+            else:
+                action = "list"
         err = reject_unless_in(action, _READ_ASSET, "read_asset", "manage_asset")
         if err:
             return err
@@ -416,7 +434,7 @@ def register_assets_tools(mcp) -> None:
           asset_fields (update alternative payload),
           parent_asset_type_id / visible (create_type).
         """
-        action = action.lower().strip()
+        action = normalize_action(action)
         err = reject_unless_in(action, _WRITE_ASSET, "manage_asset", "read_asset")
         if err:
             return err
@@ -452,7 +470,7 @@ def register_assets_tools(mcp) -> None:
             action: 'components', 'assignment_history', 'requests', 'contracts'
             display_id: The asset display ID
         """
-        action = action.lower().strip()
+        action = normalize_action(action)
         err = reject_unless_in(action, _READ_ASSET_DETAILS, "read_asset_details", "(no write counterpart)")
         if err:
             return err
@@ -598,7 +616,7 @@ def register_assets_tools(mcp) -> None:
             page: Page number (list_all)
             per_page: Items per page (list_all)
         """
-        action = action.lower().strip()
+        action = normalize_action(action)
         err = reject_unless_in(action, _READ_ASSET_RELATIONSHIP, "read_asset_relationship", "manage_asset_relationship")
         if err:
             return err
@@ -624,7 +642,7 @@ def register_assets_tools(mcp) -> None:
                 Each dict: {relationship_type_id, primary_id, primary_type,
                             secondary_id, secondary_type}
         """
-        action = action.lower().strip()
+        action = normalize_action(action)
         err = reject_unless_in(action, _WRITE_ASSET_RELATIONSHIP, "manage_asset_relationship", "read_asset_relationship")
         if err:
             return err

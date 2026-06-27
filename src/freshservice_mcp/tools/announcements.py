@@ -16,7 +16,7 @@ from ..http_client import (
     handle_error,
     parse_link_header,
 )
-from ._split import reject_unless_in
+from ._split import normalize_action, reject_unless_in
 
 
 def register_announcements_tools(mcp) -> None:
@@ -157,7 +157,7 @@ def register_announcements_tools(mcp) -> None:
 
         Optional: page, per_page (list).
         """
-        action = action.lower().strip()
+        action = normalize_action(action)
         err = reject_unless_in(action, _READ_ANNOUNCEMENT, "read_announcement", "manage_announcement")
         if err:
             return err
@@ -192,7 +192,7 @@ def register_announcements_tools(mcp) -> None:
         Optional: visible_till (ISO datetime), departments (ids), groups (ids),
         send_email (bool), additional_emails.
         """
-        action = action.lower().strip()
+        action = normalize_action(action)
         err = reject_unless_in(action, _WRITE_ANNOUNCEMENT, "manage_announcement", "read_announcement")
         if err:
             return err

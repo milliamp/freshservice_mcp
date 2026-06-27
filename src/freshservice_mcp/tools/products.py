@@ -9,7 +9,7 @@ Tools:
 from typing import Any, Dict, Optional, Union
 
 from ..http_client import api_get, api_post, api_put, handle_error, parse_link_header
-from ._split import reject_unless_in
+from ._split import normalize_action, reject_unless_in
 
 
 def register_products_tools(mcp) -> None:
@@ -118,7 +118,7 @@ def register_products_tools(mcp) -> None:
 
         Optional: page, per_page (list).
         """
-        action = action.lower().strip()
+        action = normalize_action(action)
         err = reject_unless_in(action, _READ_PRODUCT, "read_product", "manage_product")
         if err:
             return err
@@ -152,7 +152,7 @@ def register_products_tools(mcp) -> None:
         'lease'), depreciation_type_id, description (HTML), description_text
         (plain).
         """
-        action = action.lower().strip()
+        action = normalize_action(action)
         err = reject_unless_in(action, _WRITE_PRODUCT, "manage_product", "read_product")
         if err:
             return err

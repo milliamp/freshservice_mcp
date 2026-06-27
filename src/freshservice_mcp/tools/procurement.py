@@ -17,7 +17,7 @@ from ..http_client import (
     handle_error,
     parse_link_header,
 )
-from ._split import reject_unless_in
+from ._split import normalize_action, reject_unless_in
 
 
 def register_procurement_tools(mcp) -> None:
@@ -166,7 +166,7 @@ def register_procurement_tools(mcp) -> None:
 
         Optional: page, per_page (list).
         """
-        action = action.lower().strip()
+        action = normalize_action(action)
         err = reject_unless_in(action, _READ_PO, "read_purchase_order", "manage_purchase_order")
         if err:
             return err
@@ -215,7 +215,7 @@ def register_procurement_tools(mcp) -> None:
         Tax: per-item tax (in purchase_items) and per-order tax_percentage
         are independent — setting both will double-tax.
         """
-        action = action.lower().strip()
+        action = normalize_action(action)
         err = reject_unless_in(action, _WRITE_PO, "manage_purchase_order", "read_purchase_order")
         if err:
             return err
@@ -355,7 +355,7 @@ def register_procurement_tools(mcp) -> None:
 
         Optional: page, per_page (list).
         """
-        action = action.lower().strip()
+        action = normalize_action(action)
         err = reject_unless_in(action, _READ_VENDOR, "read_vendor", "manage_vendor")
         if err:
             return err
@@ -387,7 +387,7 @@ def register_procurement_tools(mcp) -> None:
         Optional: description, primary_email, address, contact_name, phone,
         custom_fields.
         """
-        action = action.lower().strip()
+        action = normalize_action(action)
         err = reject_unless_in(action, _WRITE_VENDOR, "manage_vendor", "read_vendor")
         if err:
             return err

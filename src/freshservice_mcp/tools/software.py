@@ -9,7 +9,7 @@ Tools:
 from typing import Any, Dict, List, Optional
 
 from ..http_client import api_get, api_post, api_put, handle_error, parse_link_header
-from ._split import reject_unless_in
+from ._split import normalize_action, reject_unless_in
 
 
 def register_software_tools(mcp) -> None:
@@ -163,7 +163,7 @@ def register_software_tools(mcp) -> None:
 
         Optional: workspace_id, page, per_page (list / list_licenses).
         """
-        action = action.lower().strip()
+        action = normalize_action(action)
         err = reject_unless_in(action, _READ_SOFTWARE, "read_software", "manage_software")
         if err:
             return err
@@ -198,7 +198,7 @@ def register_software_tools(mcp) -> None:
         Optional: description, application_type, status, publisher_id,
         managed_by_id, notes, category, sources, custom_fields.
         """
-        action = action.lower().strip()
+        action = normalize_action(action)
         err = reject_unless_in(action, _WRITE_SOFTWARE, "manage_software", "read_software")
         if err:
             return err

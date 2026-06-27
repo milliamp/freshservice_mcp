@@ -30,7 +30,7 @@ from ..http_client import (
     handle_error,
     parse_link_header,
 )
-from ._split import reject_unless_in
+from ._split import normalize_action, reject_unless_in
 
 
 # ── registration ───────────────────────────────────────────────────────────
@@ -349,7 +349,7 @@ def register_changes_tools(mcp) -> None:  # noqa: C901 – large by nature
 
     @mcp.tool()
     async def read_change(
-        action: str,
+        action: Optional[str] = None,
         change_id: Optional[int] = None,
         query: Optional[str] = None,
         view: Optional[str] = None,
@@ -364,11 +364,17 @@ def register_changes_tools(mcp) -> None:  # noqa: C901 – large by nature
 
         Actions: get, list, filter, get_fields
 
+        Synonyms accepted: view/show/read → get, find/search → filter,
+        index/all → list.
+
         Required per action:
           get: change_id
           filter: query
 
         Optional: page, per_page, view, sort, order_by, updated_since, workspace_id.
+
+        Default action: if not provided, inferred from params —
+          change_id → get, query → filter, otherwise list.
 
         Notes:
           - get auto-enriches with tasks, notes, approval_groups (parallel
@@ -376,7 +382,14 @@ def register_changes_tools(mcp) -> None:  # noqa: C901 – large by nature
             maintenance_window_id is set. Failed sub-fetches surface as
             _<key>_warning rather than failing the whole call.
         """
-        action = action.lower().strip()
+        action = normalize_action(action)
+        if not action:
+            if change_id:
+                action = "get"
+            elif query:
+                action = "filter"
+            else:
+                action = "list"
         err = reject_unless_in(action, _READ_CHANGE, "read_change", "manage_change")
         if err:
             return err
@@ -447,7 +460,7 @@ def register_changes_tools(mcp) -> None:  # noqa: C901 – large by nature
           change_impact, rollout_plan, backout_plan (planning fields),
           change_result_explanation (close).
         """
-        action = action.lower().strip()
+        action = normalize_action(action)
         err = reject_unless_in(action, _WRITE_CHANGE, "manage_change", "read_change")
         if err:
             return err
@@ -561,7 +574,7 @@ def register_changes_tools(mcp) -> None:  # noqa: C901 – large by nature
             change_id: The change ID
             note_id: Required for view
         """
-        action = action.lower().strip()
+        action = normalize_action(action)
         err = reject_unless_in(action, _READ_CHANGE_NOTE, "read_change_note", "manage_change_note")
         if err:
             return err
@@ -582,7 +595,7 @@ def register_changes_tools(mcp) -> None:  # noqa: C901 – large by nature
             note_id: Required for update, delete
             body: Note body HTML (create, update)
         """
-        action = action.lower().strip()
+        action = normalize_action(action)
         err = reject_unless_in(action, _WRITE_CHANGE_NOTE, "manage_change_note", "read_change_note")
         if err:
             return err
@@ -686,7 +699,7 @@ def register_changes_tools(mcp) -> None:  # noqa: C901 – large by nature
             change_id: The change ID
             task_id: Required for view
         """
-        action = action.lower().strip()
+        action = normalize_action(action)
         err = reject_unless_in(action, _READ_CHANGE_TASK, "read_change_task", "manage_change_task")
         if err:
             return err
@@ -717,7 +730,7 @@ def register_changes_tools(mcp) -> None:  # noqa: C901 – large by nature
         Optional: task_status, task_priority, assigned_to_id, task_group_id,
         due_date (ISO), task_fields (dict — update alternative).
         """
-        action = action.lower().strip()
+        action = normalize_action(action)
         err = reject_unless_in(action, _WRITE_CHANGE_TASK, "manage_change_task", "read_change_task")
         if err:
             return err
@@ -825,7 +838,7 @@ def register_changes_tools(mcp) -> None:  # noqa: C901 – large by nature
             change_id: The change ID
             time_entry_id: Required for view
         """
-        action = action.lower().strip()
+        action = normalize_action(action)
         err = reject_unless_in(action, _READ_CHANGE_TIME_ENTRY, "read_change_time_entry", "manage_change_time_entry")
         if err:
             return err
@@ -852,7 +865,7 @@ def register_changes_tools(mcp) -> None:  # noqa: C901 – large by nature
             te_agent_id: Agent ID who did the work (create)
             executed_at: ISO datetime (create)
         """
-        action = action.lower().strip()
+        action = normalize_action(action)
         err = reject_unless_in(action, _WRITE_CHANGE_TIME_ENTRY, "manage_change_time_entry", "read_change_time_entry")
         if err:
             return err
@@ -1001,7 +1014,7 @@ def register_changes_tools(mcp) -> None:  # noqa: C901 – large by nature
             change_id: The change ID
             approval_id: Approval ID (view)
         """
-        action = action.lower().strip()
+        action = normalize_action(action)
         err = reject_unless_in(action, _READ_CHANGE_APPROVAL, "read_change_approval", "manage_change_approval")
         if err:
             return err
@@ -1030,7 +1043,7 @@ def register_changes_tools(mcp) -> None:  # noqa: C901 – large by nature
 
         Optional: approval_type ('everyone' or 'any').
         """
-        action = action.lower().strip()
+        action = normalize_action(action)
         err = reject_unless_in(action, _WRITE_CHANGE_APPROVAL, "manage_change_approval", "read_change_approval")
         if err:
             return err

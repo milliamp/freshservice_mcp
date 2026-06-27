@@ -17,7 +17,7 @@ from ..http_client import (
     handle_error,
     parse_link_header,
 )
-from ._split import reject_unless_in
+from ._split import normalize_action, reject_unless_in
 
 
 def register_contracts_tools(mcp) -> None:
@@ -234,7 +234,7 @@ def register_contracts_tools(mcp) -> None:
 
         Optional: page, per_page (list).
         """
-        action = action.lower().strip()
+        action = normalize_action(action)
         err = reject_unless_in(action, _READ_CONTRACT, "read_contract", "manage_contract")
         if err:
             return err
@@ -285,7 +285,7 @@ def register_contracts_tools(mcp) -> None:
           visible_to_id, software_id, notify_to (emails),
           associated_asset_ids, item_cost_details, custom_fields
         """
-        action = action.lower().strip()
+        action = normalize_action(action)
         err = reject_unless_in(action, _WRITE_CONTRACT, "manage_contract", "read_contract")
         if err:
             return err

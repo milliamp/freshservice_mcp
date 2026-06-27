@@ -10,7 +10,7 @@ Tools:
 from typing import Any, Dict, List, Optional
 
 from ..http_client import api_get, api_post, api_put, handle_error
-from ._split import reject_unless_in
+from ._split import normalize_action, reject_unless_in
 
 
 def register_solutions_tools(mcp) -> None:
@@ -248,7 +248,7 @@ def register_solutions_tools(mcp) -> None:
           list_articles: folder_id
           get_article: article_id
         """
-        action = action.lower().strip()
+        action = normalize_action(action)
         err = reject_unless_in(action, _READ_SOLUTION, "read_solution", "manage_solution")
         if err:
             return err
@@ -296,7 +296,7 @@ def register_solutions_tools(mcp) -> None:
           description, workspace_id, default_category (update_category),
           tags, keywords, review_date.
         """
-        action = action.lower().strip()
+        action = normalize_action(action)
         err = reject_unless_in(action, _WRITE_SOLUTION, "manage_solution", "read_solution")
         if err:
             return err

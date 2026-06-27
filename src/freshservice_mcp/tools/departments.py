@@ -10,7 +10,7 @@ Tools:
 from typing import Any, Dict, List, Optional
 
 from ..http_client import api_delete, api_get, api_post, api_put, handle_error
-from ._split import reject_unless_in
+from ._split import normalize_action, reject_unless_in
 
 
 def register_department_tools(mcp) -> None:
@@ -143,7 +143,7 @@ def register_department_tools(mcp) -> None:
 
         Optional: page, per_page.
         """
-        action = action.lower().strip()
+        action = normalize_action(action)
         err = reject_unless_in(action, _READ_DEPARTMENT, "read_department", "manage_department")
         if err:
             return err
@@ -174,7 +174,7 @@ def register_department_tools(mcp) -> None:
         Optional: description, head_user_id, prime_user_id, domains
         (email domains list), custom_fields.
         """
-        action = action.lower().strip()
+        action = normalize_action(action)
         err = reject_unless_in(action, _WRITE_DEPARTMENT, "manage_department", "read_department")
         if err:
             return err
