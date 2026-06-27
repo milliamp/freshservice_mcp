@@ -150,12 +150,13 @@ def register_custom_objects_tools(mcp) -> None:
     ) -> Dict[str, Any]:
         """Read Freshservice custom objects and their records.
 
-        Args:
-            action: One of 'list_objects', 'get_object', 'list_records', 'get_record'
-            type_id: Object type ID (required for get_object, list_records, get_record)
-            record_id: Record ID (required for get_record)
-            page: Page number (list_objects, list_records)
-            per_page: Items per page 1-100 (list_objects, list_records)
+        Actions: list_objects, get_object, list_records, get_record
+
+        Required per action:
+          get_object / list_records: type_id
+          get_record: type_id, record_id
+
+        Optional: page, per_page (list_objects, list_records).
         """
         action = action.lower().strip()
         err = reject_unless_in(action, _READ_CUSTOM_OBJECT, "read_custom_object", "manage_custom_object")
@@ -172,11 +173,12 @@ def register_custom_objects_tools(mcp) -> None:
     ) -> Dict[str, Any]:
         """Write actions on Freshservice custom object records.
 
-        Args:
-            action: One of 'create_record', 'update_record', 'delete_record'
-            type_id: Object type ID (required for all actions)
-            record_id: Record ID (required for update_record, delete_record)
-            data: Record field data dict (create_record, update_record)
+        Actions: create_record, update_record, delete_record
+
+        Required per action:
+          create_record: type_id, data
+          update_record: type_id, record_id, data
+          delete_record: type_id, record_id
         """
         action = action.lower().strip()
         err = reject_unless_in(action, _WRITE_CUSTOM_OBJECT, "manage_custom_object", "read_custom_object")

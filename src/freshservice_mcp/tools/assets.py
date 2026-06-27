@@ -343,20 +343,16 @@ def register_assets_tools(mcp) -> None:
     ) -> Dict[str, Any]:
         """Read Freshservice assets and asset types.
 
-        Args:
-            action: One of 'list', 'get', 'search', 'filter',
-                    'get_types', 'get_type', 'get_type_fields'
-            display_id: Asset display ID (get)
-            asset_type_id: Asset type ID (get_type, get_type_fields)
-            search_query: Search by name/tag/serial (search)
-            filter_query: Filter expression (filter)
-            include: Include extra data, e.g. 'type_fields' (list, get)
-            order_by: Sort field (list)
-            order_type: 'asc' or 'desc' (list)
-            trashed: Include trashed assets (list, search)
-            workspace_id: Workspace ID (list)
-            page: Page number
-            per_page: Items per page
+        Actions: list, get, search, filter, get_types, get_type, get_type_fields
+
+        Required per action:
+          get: display_id
+          search: search_query (name/tag/serial)
+          filter: filter_query (e.g. "asset_type_id:50000039936")
+          get_type / get_type_fields: asset_type_id
+
+        Optional: include (e.g. 'type_fields'), order_by, order_type,
+        trashed, workspace_id, page, per_page.
         """
         action = action.lower().strip()
         err = reject_unless_in(action, _READ_ASSET, "read_asset", "manage_asset")
@@ -403,27 +399,22 @@ def register_assets_tools(mcp) -> None:
     ) -> Dict[str, Any]:
         """Write actions on Freshservice assets and asset types.
 
-        Args:
-            action: One of 'create', 'update', 'delete', 'delete_permanently',
-                    'restore', 'move', 'create_type'
-            display_id: Asset display ID (update, delete, restore, move)
-            asset_type_id: Asset type ID (create — MANDATORY)
-            name: Asset name (create — MANDATORY) or asset type name (create_type — MANDATORY)
-            asset_tag: Asset tag (e.g. 'ASSET-9')
-            impact: 'low', 'medium', or 'high' (default: 'low')
-            usage_type: 'permanent' or 'loaner' (default: 'permanent')
-            description: Asset or asset type description
-            user_id: User ID (Used By)
-            location_id: Location ID
-            department_id: Department ID
-            agent_id: Agent ID (Managed By)
-            group_id: Group ID (Managed By Group)
-            assigned_on: ISO date when assigned
-            workspace_id: Workspace ID (create, move)
-            type_fields: Asset-type-specific fields dict
-            asset_fields: Generic update fields dict (update — alternative to explicit params)
-            parent_asset_type_id: Parent asset type ID (create_type)
-            visible: Whether the asset type is visible (create_type, default True)
+        Actions: create, update, delete, delete_permanently, restore, move,
+          create_type
+
+        Required per action:
+          create: name, asset_type_id
+          update / delete / delete_permanently / restore: display_id
+          move: display_id, workspace_id
+          create_type: name
+
+        Optional fields:
+          impact: low|medium|high (default low)
+          usage_type: permanent|loaner (default permanent)
+          asset_tag, description, user_id, location_id, department_id,
+          agent_id, group_id, assigned_on, workspace_id, type_fields,
+          asset_fields (update alternative payload),
+          parent_asset_type_id / visible (create_type).
         """
         action = action.lower().strip()
         err = reject_unless_in(action, _WRITE_ASSET, "manage_asset", "read_asset")

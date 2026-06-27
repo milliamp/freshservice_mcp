@@ -173,11 +173,13 @@ def register_agents_tools(mcp) -> None:
     ) -> Dict[str, Any]:
         """Read Freshservice agents.
 
-        Args:
-            action: 'list', 'get', 'filter', 'get_fields'
-            agent_id: Required for get
-            query: Filter query string (filter)
-            page/per_page: Pagination (list)
+        Actions: list, get, filter, get_fields
+
+        Required per action:
+          get: agent_id
+          filter: query
+
+        Optional: page, per_page (list).
         """
         action = action.lower().strip()
         err = reject_unless_in(action, _READ_AGENT, "read_agent", "manage_agent")
@@ -212,11 +214,16 @@ def register_agents_tools(mcp) -> None:
     ) -> Dict[str, Any]:
         """Write actions on Freshservice agents.
 
-        Args:
-            action: 'create', 'update'
-            agent_id: Required for update
-            first_name: MANDATORY for create
-            email: Agent email (create)
+        Actions: create, update
+
+        Required per action:
+          create: first_name
+          update: agent_id
+
+        Optional: last_name, email, occasional, job_title, work_phone_number,
+        mobile_phone_number, department_ids, reporting_manager_id, address,
+        time_zone, time_format, language, location_id, background_information,
+        scoreboard_level_id, can_see_all_tickets_from_associated_departments.
         """
         action = action.lower().strip()
         err = reject_unless_in(action, _WRITE_AGENT, "manage_agent", "read_agent")
@@ -311,9 +318,10 @@ def register_agents_tools(mcp) -> None:
     ) -> Dict[str, Any]:
         """Read Freshservice agent groups.
 
-        Args:
-            action: 'list', 'get'
-            group_id: Required for get
+        Actions: list, get
+
+        Required per action:
+          get: group_id
         """
         action = action.lower().strip()
         err = reject_unless_in(action, _READ_AGENT_GROUP, "read_agent_group", "manage_agent_group")
@@ -335,16 +343,15 @@ def register_agents_tools(mcp) -> None:
     ) -> Dict[str, Any]:
         """Write actions on Freshservice agent groups.
 
-        Args:
-            action: 'create', 'update'
-            group_id: Required for update
-            name: Group name (create — MANDATORY)
-            description: Group description
-            agent_ids: List of agent IDs in the group
-            auto_ticket_assign: Auto-assign tickets
-            escalate_to: Agent ID for escalation
-            unassigned_for: Duration before escalation (e.g. '30m', '1h')
-            group_fields: Generic fields dict (update — alternative to explicit params)
+        Actions: create, update
+
+        Required per action:
+          create: name
+          update: group_id
+
+        Optional: description, agent_ids, auto_ticket_assign, escalate_to,
+        unassigned_for (e.g. '30m', '1h'), group_fields (alt fields dict
+        for update).
         """
         action = action.lower().strip()
         err = reject_unless_in(action, _WRITE_AGENT_GROUP, "manage_agent_group", "read_agent_group")

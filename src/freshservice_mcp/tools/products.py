@@ -111,11 +111,12 @@ def register_products_tools(mcp) -> None:
     ) -> Dict[str, Any]:
         """Read Freshservice products.
 
-        Args:
-            action: 'list', 'get'
-            product_id: Required for get
-            page: Page number (list)
-            per_page: Items per page (list)
+        Actions: list, get
+
+        Required per action:
+          get: product_id
+
+        Optional: page, per_page (list).
         """
         action = action.lower().strip()
         err = reject_unless_in(action, _READ_PRODUCT, "read_product", "manage_product")
@@ -141,17 +142,15 @@ def register_products_tools(mcp) -> None:
     ) -> Dict[str, Any]:
         """Write actions on Freshservice products.
 
-        Args:
-            action: 'create', 'update'
-            product_id: Required for update
-            name: Product name (create — MANDATORY)
-            asset_type_id: Asset type ID (create — MANDATORY)
-            manufacturer: Manufacturer name
-            status: Product status (str or int)
-            mode_of_procurement: e.g. 'buy', 'lease'
-            depreciation_type_id: Depreciation type ID
-            description: HTML description
-            description_text: Plain text description
+        Actions: create, update
+
+        Required per action:
+          create: name, asset_type_id
+          update: product_id
+
+        Optional: manufacturer, status, mode_of_procurement (e.g. 'buy',
+        'lease'), depreciation_type_id, description (HTML), description_text
+        (plain).
         """
         action = action.lower().strip()
         err = reject_unless_in(action, _WRITE_PRODUCT, "manage_product", "read_product")

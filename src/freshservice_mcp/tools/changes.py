@@ -347,17 +347,13 @@ def register_changes_tools(mcp) -> None:  # noqa: C901 – large by nature
     ) -> Dict[str, Any]:
         """Read Freshservice changes.
 
-        Args:
-            action: 'get', 'list', 'filter', 'get_fields'
-            change_id: Required for get
-            query: Filter query string (list/filter)
-            view: View name or ID (list)
-            sort: Sort field (list)
-            order_by: 'asc' or 'desc' (list)
-            updated_since: ISO datetime (list)
-            workspace_id: Target workspace (list/filter)
-            page: Page number
-            per_page: Items per page 1-100
+        Actions: get, list, filter, get_fields
+
+        Required per action:
+          get: change_id
+          filter: query
+
+        Optional: page, per_page, view, sort, order_by, updated_since, workspace_id.
         """
         action = action.lower().strip()
         err = reject_unless_in(action, _READ_CHANGE, "read_change", "manage_change")
@@ -412,41 +408,23 @@ def register_changes_tools(mcp) -> None:  # noqa: C901 – large by nature
     ) -> Dict[str, Any]:
         """Write actions on Freshservice changes.
 
-        Args:
-            action: One of 'create', 'update', 'delete', 'close', 'move'
-            change_id: Required for update, delete, close, move
-            requester_id: Initiator ID (create — MANDATORY)
-            subject: Change subject (create — MANDATORY)
-            description: HTML description (create — MANDATORY)
-            priority: 1=Low, 2=Medium, 3=High, 4=Urgent
-            impact: 1=Low, 2=Medium, 3=High
-            status: 1=Open, 2=Planning, 3=Awaiting Approval, 4=Pending Release,
-                    5=Pending Review, 6=Closed
-            risk: 1=Low, 2=Medium, 3=High, 4=Very High
-            change_type: 1=Minor, 2=Standard, 3=Major, 4=Emergency
-            group_id: Agent group ID
-            agent_id: Agent ID
-            department_id: Department ID
-            category: Category string
-            sub_category: Sub-category string
-            item_category: Item category string
-            planned_start_date: ISO datetime
-            planned_end_date: ISO datetime
-            reason_for_change: Planning field — reason (text/HTML)
-            change_impact: Planning field — impact analysis (text/HTML)
-            rollout_plan: Planning field — rollout plan (text/HTML)
-            backout_plan: Planning field — backout plan (text/HTML)
-            custom_fields: Custom fields dict
-            assets: Assets list (associated CIs), e.g. [{"display_id": 1}]
-            impacted_services: Impacted services list, e.g. [{"display_id": 167456}]
-                NOTE: This is different from 'assets'. Assets = associated CIs,
-                impacted_services = business services affected by the change.
-            maintenance_window_id: Maintenance Window ID to associate with
-                this Change. On create, applied via follow-up PUT. On update,
-                sent as {"maintenance_window": {"id": <value>}}.
-                Use this to link a Change to an existing Maintenance Window.
-            change_result_explanation: Result explanation (close)
-            workspace_id: Target workspace (move)
+        Actions: create, update, delete, close, move
+
+        Required per action:
+          create: requester_id, subject, description
+          update / delete / close: change_id
+          move: change_id, workspace_id
+
+        Enums (int): priority 1-4 (Low-Urgent); impact 1-3; status 1=Open, 2=Planning,
+          3=AwaitingApproval, 4=PendingRelease, 5=PendingReview, 6=Closed; risk 1-4;
+          change_type 1=Minor, 2=Standard, 3=Major, 4=Emergency.
+
+        Optional: group_id, agent_id, department_id, category, sub_category,
+          item_category, planned_start_date, planned_end_date, custom_fields,
+          assets (CIs: [{"display_id": N}]), impacted_services (business services
+          affected: [{"display_id": N}]), maintenance_window_id, reason_for_change,
+          change_impact, rollout_plan, backout_plan (planning fields),
+          change_result_explanation (close).
         """
         action = action.lower().strip()
         err = reject_unless_in(action, _WRITE_CHANGE, "manage_change", "read_change")
@@ -709,18 +687,14 @@ def register_changes_tools(mcp) -> None:  # noqa: C901 – large by nature
     ) -> Dict[str, Any]:
         """Write actions on change tasks.
 
-        Args:
-            action: 'create', 'update', 'delete'
-            change_id: The change ID
-            task_id: Required for update, delete
-            title: Task title (create)
-            description: Task description (create)
-            task_status: Task status int (create/update)
-            task_priority: Task priority int (create/update)
-            assigned_to_id: Agent ID to assign (create/update)
-            task_group_id: Group ID (create/update)
-            due_date: ISO date (create/update)
-            task_fields: Dict of fields (update — alternative to individual params)
+        Actions: create, update, delete
+
+        Required per action:
+          create: change_id, title, description
+          update / delete: change_id, task_id
+
+        Optional: task_status, task_priority, assigned_to_id, task_group_id,
+        due_date (ISO), task_fields (dict — update alternative).
         """
         action = action.lower().strip()
         err = reject_unless_in(action, _WRITE_CHANGE_TASK, "manage_change_task", "read_change_task")
@@ -1025,16 +999,15 @@ def register_changes_tools(mcp) -> None:  # noqa: C901 – large by nature
     ) -> Dict[str, Any]:
         """Write actions on change approvals and approval groups.
 
-        Args:
-            action: 'create_group', 'update_group', 'cancel_group',
-                    'remind', 'cancel', 'set_chain_rule'
-            change_id: The change ID
-            approval_id: Approval ID (remind, cancel)
-            approval_group_id: Approval group ID (update_group, cancel_group)
-            name: Group name (create_group, update_group)
-            approver_ids: List of agent IDs (create_group, update_group)
-            approval_type: 'everyone' or 'any' (create_group, update_group)
-            approval_chain_type: 'parallel' or 'sequential' (set_chain_rule)
+        Actions: create_group, update_group, cancel_group, remind, cancel, set_chain_rule
+
+        Required per action:
+          create_group: change_id, name, approver_ids
+          update_group / cancel_group: change_id, approval_group_id
+          remind / cancel: change_id, approval_id
+          set_chain_rule: change_id, approval_chain_type ('parallel' or 'sequential')
+
+        Optional: approval_type ('everyone' or 'any').
         """
         action = action.lower().strip()
         err = reject_unless_in(action, _WRITE_CHANGE_APPROVAL, "manage_change_approval", "read_change_approval")

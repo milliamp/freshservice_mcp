@@ -135,12 +135,13 @@ def register_department_tools(mcp) -> None:
     ) -> Dict[str, Any]:
         """Read Freshservice departments.
 
-        Args:
-            action: One of 'list', 'get', 'filter', 'get_fields'.
-            department_id: Department ID (required for get).
-            query: Filter query string for 'filter' action
-                   (e.g. "name:'Engineering'").
-            page/per_page: Pagination.
+        Actions: list, get, filter, get_fields
+
+        Required per action:
+          get: department_id
+          filter: query (e.g. "name:'Engineering'")
+
+        Optional: page, per_page.
         """
         action = action.lower().strip()
         err = reject_unless_in(action, _READ_DEPARTMENT, "read_department", "manage_department")
@@ -164,15 +165,14 @@ def register_department_tools(mcp) -> None:
     ) -> Dict[str, Any]:
         """Write actions on Freshservice departments.
 
-        Args:
-            action: One of 'create', 'update', 'delete'.
-            department_id: Department ID (required for update, delete).
-            name: Department name (required for create).
-            description: Description text.
-            head_user_id: User ID of department head.
-            prime_user_id: User ID of department prime contact.
-            domains: List of email domains for the department.
-            custom_fields: Custom field values dict.
+        Actions: create, update, delete
+
+        Required per action:
+          create: name
+          update / delete: department_id
+
+        Optional: description, head_user_id, prime_user_id, domains
+        (email domains list), custom_fields.
         """
         action = action.lower().strip()
         err = reject_unless_in(action, _WRITE_DEPARTMENT, "manage_department", "read_department")

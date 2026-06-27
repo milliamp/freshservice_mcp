@@ -238,13 +238,15 @@ def register_solutions_tools(mcp) -> None:
     ) -> Dict[str, Any]:
         """Read Freshservice solution categories, folders, and articles.
 
-        Args:
-            action: 'list_categories', 'get_category',
-                    'list_folders', 'get_folder',
-                    'list_articles', 'get_article'
-            category_id: Category ID (get_category, list_folders)
-            folder_id: Folder ID (get_folder, list_articles)
-            article_id: Article ID (get_article)
+        Actions: list_categories, get_category, list_folders, get_folder,
+          list_articles, get_article
+
+        Required per action:
+          get_category: category_id
+          list_folders: category_id
+          get_folder: folder_id
+          list_articles: folder_id
+          get_article: article_id
         """
         action = action.lower().strip()
         err = reject_unless_in(action, _READ_SOLUTION, "read_solution", "manage_solution")
@@ -274,28 +276,25 @@ def register_solutions_tools(mcp) -> None:
         keywords: Optional[List[str]] = None,
         review_date: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Write actions on Freshservice solution categories, folders, and articles.
+        """Write actions on Freshservice solution categories, folders, articles.
 
-        Args:
-            action: One of:
-                Categories: 'create_category', 'update_category'
-                Folders: 'create_folder', 'update_folder'
-                Articles: 'create_article', 'update_article', 'publish_article'
-            category_id: Category ID (update_category, create_folder)
-            folder_id: Folder ID (update_folder, create_article)
-            article_id: Article ID (update/publish article)
-            name: Name (create/update category or folder)
-            title: Article title (create/update article)
-            description: Description text/HTML
-            visibility: Folder visibility (1=all, 2=logged-in, 3=agents, 4=depts)
-            default_category: Mark as default (update_category)
-            workspace_id: Workspace ID (create/update category)
-            department_ids: Department IDs (create folder)
-            article_type: 1=permanent, 2=workaround (create/update article)
-            status: 1=draft, 2=published (create/update article)
-            tags: Article tags list
-            keywords: SEO keywords list
-            review_date: ISO date for article review
+        Actions: create_category, update_category, create_folder,
+          update_folder, create_article, update_article, publish_article
+
+        Required per action:
+          create_category: name
+          update_category: category_id
+          create_folder: name, category_id, department_ids
+          update_folder: folder_id
+          create_article: title, description, folder_id
+          update_article / publish_article: article_id
+
+        Optional fields:
+          visibility (folder): 1=all, 2=logged-in, 3=agents, 4=depts (default 4)
+          article_type: 1=permanent, 2=workaround (default 1)
+          status: 1=draft, 2=published (default 1)
+          description, workspace_id, default_category (update_category),
+          tags, keywords, review_date.
         """
         action = action.lower().strip()
         err = reject_unless_in(action, _WRITE_SOLUTION, "manage_solution", "read_solution")

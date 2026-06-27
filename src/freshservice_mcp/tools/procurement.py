@@ -159,11 +159,12 @@ def register_procurement_tools(mcp) -> None:
     ) -> Dict[str, Any]:
         """Read Freshservice purchase orders.
 
-        Args:
-            action: 'list', 'get'
-            purchase_order_id: Required for get
-            page: Page number (list)
-            per_page: Items per page (list)
+        Actions: list, get
+
+        Required per action:
+          get: purchase_order_id
+
+        Optional: page, per_page (list).
         """
         action = action.lower().strip()
         err = reject_unless_in(action, _READ_PO, "read_purchase_order", "manage_purchase_order")
@@ -197,31 +198,22 @@ def register_procurement_tools(mcp) -> None:
     ) -> Dict[str, Any]:
         """Write actions on Freshservice purchase orders.
 
-        Args:
-            action: 'create', 'update'
-            purchase_order_id: PO ID (update)
-            vendor_id: Vendor ID (create — MANDATORY)
-            name: Title of the purchase order
-            po_number: Unique purchase order number
-            vendor_details: Details of the vendor
-            expected_delivery_date: Expected delivery date (YYYY-MM-DD)
-            shipping_address: Shipping address
-            billing_address: Billing address
-            billing_same_as_shipping: Whether billing matches shipping
-            currency_code: Currency code (e.g. 'USD')
-            conversion_rate: Currency conversion rate
-            department_id: Department ID
-            discount_percentage: Discount percentage on the order
-            tax_percentage: Order-level tax percentage
-            shipping_cost: Shipping cost
-            purchase_items: List of item dicts, each with item_type, item_name,
-                cost, quantity, tax_percentage (all required), plus optional
-                description and item_id
-            custom_fields: Custom field key-value pairs
+        Actions: create, update
 
-        Tax Notes:
-            There are TWO tax levels: per-item (in purchase_items) and per-order
-            (tax_percentage). Do not set both to avoid double taxation.
+        Required per action:
+          create: vendor_id
+          update: purchase_order_id
+
+        Optional fields:
+          name, po_number, vendor_details, expected_delivery_date (YYYY-MM-DD),
+          shipping_address, billing_address, billing_same_as_shipping,
+          currency_code, conversion_rate, department_id, discount_percentage,
+          tax_percentage, shipping_cost, custom_fields
+          purchase_items: list of dicts (item_type, item_name, cost, quantity,
+            tax_percentage required; description, item_id optional)
+
+        Tax: per-item tax (in purchase_items) and per-order tax_percentage
+        are independent — setting both will double-tax.
         """
         action = action.lower().strip()
         err = reject_unless_in(action, _WRITE_PO, "manage_purchase_order", "read_purchase_order")
@@ -356,11 +348,12 @@ def register_procurement_tools(mcp) -> None:
     ) -> Dict[str, Any]:
         """Read Freshservice vendors.
 
-        Args:
-            action: 'list', 'get'
-            vendor_id: Required for get
-            page: Page number (list)
-            per_page: Items per page (list)
+        Actions: list, get
+
+        Required per action:
+          get: vendor_id
+
+        Optional: page, per_page (list).
         """
         action = action.lower().strip()
         err = reject_unless_in(action, _READ_VENDOR, "read_vendor", "manage_vendor")
@@ -385,16 +378,14 @@ def register_procurement_tools(mcp) -> None:
     ) -> Dict[str, Any]:
         """Write actions on Freshservice vendors.
 
-        Args:
-            action: 'create', 'update', 'delete'
-            vendor_id: Vendor ID (update, delete)
-            name: Vendor name (create — MANDATORY)
-            description: Vendor description
-            primary_email: Primary contact email
-            address: Physical address
-            contact_name: Primary contact person name
-            phone: Contact phone number
-            custom_fields: Custom field key-value pairs
+        Actions: create, update, delete
+
+        Required per action:
+          create: name
+          update / delete: vendor_id
+
+        Optional: description, primary_email, address, contact_name, phone,
+        custom_fields.
         """
         action = action.lower().strip()
         err = reject_unless_in(action, _WRITE_VENDOR, "manage_vendor", "read_vendor")

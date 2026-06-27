@@ -140,11 +140,13 @@ def register_locations_tools(mcp) -> None:
     ) -> Dict[str, Any]:
         """Read Freshservice locations.
 
-        Args:
-            action: One of 'list', 'get', 'filter'.
-            location_id: Location ID (required for get).
-            query: Filter query for 'filter' action (e.g. "name:'New York'").
-            page/per_page: Pagination.
+        Actions: list, get, filter
+
+        Required per action:
+          get: location_id
+          filter: query (e.g. "name:'New York'")
+
+        Optional: page, per_page.
         """
         action = action.lower().strip()
         err = reject_unless_in(action, _READ_LOCATION, "read_location", "manage_location")
@@ -173,15 +175,14 @@ def register_locations_tools(mcp) -> None:
     ) -> Dict[str, Any]:
         """Write actions on Freshservice locations.
 
-        Args:
-            action: One of 'create', 'update', 'delete'.
-            location_id: Location ID (required for update, delete).
-            name: Location name (required for create).
-            line1/line2/city/state/country/zipcode: Address fields.
-            contact_name: Contact person name.
-            email: Contact email.
-            phone: Contact phone.
-            parent_location_id: Parent location ID for hierarchical locations.
+        Actions: create, update, delete
+
+        Required per action:
+          create: name
+          update / delete: location_id
+
+        Optional: line1, line2, city, state, country, zipcode (address);
+        contact_name, email, phone, parent_location_id.
         """
         action = action.lower().strip()
         err = reject_unless_in(action, _WRITE_LOCATION, "manage_location", "read_location")

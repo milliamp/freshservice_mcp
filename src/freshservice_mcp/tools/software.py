@@ -156,12 +156,12 @@ def register_software_tools(mcp) -> None:
     ) -> Dict[str, Any]:
         """Read Freshservice software / applications.
 
-        Args:
-            action: One of 'list', 'get', 'list_licenses'
-            software_id: Software/application ID (get)
-            workspace_id: Workspace filter (list, list_licenses)
-            page: Page number (list, list_licenses)
-            per_page: Items per page 1-100 (list, list_licenses)
+        Actions: list, get, list_licenses
+
+        Required per action:
+          get: software_id
+
+        Optional: workspace_id, page, per_page (list / list_licenses).
         """
         action = action.lower().strip()
         err = reject_unless_in(action, _READ_SOFTWARE, "read_software", "manage_software")
@@ -189,19 +189,14 @@ def register_software_tools(mcp) -> None:
     ) -> Dict[str, Any]:
         """Write actions on Freshservice software / applications.
 
-        Args:
-            action: 'create', 'update'
-            software_id: Software/application ID (update)
-            name: Software name (create — MANDATORY)
-            description: Software description
-            application_type: Type of application
-            status: Software status
-            publisher_id: Publisher ID
-            managed_by_id: ID of the agent managing this software
-            notes: Additional notes
-            category: Software category
-            sources: List of source dicts
-            custom_fields: Custom field key-value pairs
+        Actions: create, update
+
+        Required per action:
+          create: name
+          update: software_id
+
+        Optional: description, application_type, status, publisher_id,
+        managed_by_id, notes, category, sources, custom_fields.
         """
         action = action.lower().strip()
         err = reject_unless_in(action, _WRITE_SOFTWARE, "manage_software", "read_software")

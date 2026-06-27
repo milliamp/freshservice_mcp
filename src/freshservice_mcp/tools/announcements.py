@@ -150,11 +150,12 @@ def register_announcements_tools(mcp) -> None:
     ) -> Dict[str, Any]:
         """Read Freshservice announcements.
 
-        Args:
-            action: 'list', 'get'
-            announcement_id: Required for get
-            page: Page number (list)
-            per_page: Items per page 1-100 (list)
+        Actions: list, get
+
+        Required per action:
+          get: announcement_id
+
+        Optional: page, per_page (list).
         """
         action = action.lower().strip()
         err = reject_unless_in(action, _READ_ANNOUNCEMENT, "read_announcement", "manage_announcement")
@@ -181,19 +182,15 @@ def register_announcements_tools(mcp) -> None:
     ) -> Dict[str, Any]:
         """Write actions on Freshservice announcements.
 
-        Args:
-            action: One of 'create', 'update', 'delete'
-            announcement_id: Required for update, delete
-            title: Announcement title (create - REQUIRED)
-            body_html: Announcement body in HTML (create - REQUIRED)
-            visible_from: ISO datetime when announcement becomes visible (create - REQUIRED)
-            visible_till: ISO datetime when announcement expires
-            visibility: One of 'everyone', 'agents_only', 'agents_and_groups'
-                        (create - REQUIRED)
-            departments: List of department IDs to target
-            groups: List of group IDs to target
-            send_email: Whether to send email notification (bool)
-            additional_emails: List of additional email addresses to notify
+        Actions: create, update, delete
+
+        Required per action:
+          create: title, body_html, visible_from (ISO datetime), visibility
+            (everyone | agents_only | agents_and_groups)
+          update / delete: announcement_id
+
+        Optional: visible_till (ISO datetime), departments (ids), groups (ids),
+        send_email (bool), additional_emails.
         """
         action = action.lower().strip()
         err = reject_unless_in(action, _WRITE_ANNOUNCEMENT, "manage_announcement", "read_announcement")

@@ -176,12 +176,13 @@ def register_requesters_tools(mcp) -> None:
     ) -> Dict[str, Any]:
         """Read Freshservice requesters.
 
-        Args:
-            action: 'list', 'get', 'filter', 'get_fields'
-            requester_id: Required for get
-            query: Filter query string (filter)
-            include_agents: Include agents in filter results (filter)
-            page/per_page: Pagination (list)
+        Actions: list, get, filter, get_fields
+
+        Required per action:
+          get: requester_id
+          filter: query
+
+        Optional: include_agents (filter), page, per_page (list).
         """
         action = action.lower().strip()
         err = reject_unless_in(action, _READ_REQUESTER, "read_requester", "manage_requester")
@@ -218,11 +219,18 @@ def register_requesters_tools(mcp) -> None:
     ) -> Dict[str, Any]:
         """Write actions on Freshservice requesters.
 
-        Args:
-            action: 'create', 'update', 'add_to_group'
-            requester_id: Required for update, add_to_group
-            first_name: MANDATORY for create
-            group_id: Group ID (add_to_group)
+        Actions: create, update, add_to_group
+
+        Required per action:
+          create: first_name
+          update: requester_id
+          add_to_group: requester_id, group_id
+
+        Optional: last_name, job_title, primary_email, secondary_emails,
+        work_phone_number, mobile_phone_number, department_ids,
+        reporting_manager_id, address, time_zone, time_format, language,
+        location_id, background_information, custom_fields,
+        can_see_all_tickets_from_associated_departments.
         """
         action = action.lower().strip()
         err = reject_unless_in(action, _WRITE_REQUESTER, "manage_requester", "read_requester")
@@ -327,10 +335,12 @@ def register_requesters_tools(mcp) -> None:
     ) -> Dict[str, Any]:
         """Read Freshservice requester groups.
 
-        Args:
-            action: 'list', 'get', 'list_members'
-            group_id: Required for get, list_members
-            page/per_page: Pagination (list)
+        Actions: list, get, list_members
+
+        Required per action:
+          get / list_members: group_id
+
+        Optional: page, per_page (list).
         """
         action = action.lower().strip()
         err = reject_unless_in(action, _READ_REQUESTER_GROUP, "read_requester_group", "manage_requester_group")
@@ -347,11 +357,13 @@ def register_requesters_tools(mcp) -> None:
     ) -> Dict[str, Any]:
         """Write actions on Freshservice requester groups.
 
-        Args:
-            action: 'create', 'update'
-            group_id: Required for update
-            name: Group name (create — MANDATORY)
-            description: Group description
+        Actions: create, update
+
+        Required per action:
+          create: name
+          update: group_id
+
+        Optional: description.
         """
         action = action.lower().strip()
         err = reject_unless_in(action, _WRITE_REQUESTER_GROUP, "manage_requester_group", "read_requester_group")
