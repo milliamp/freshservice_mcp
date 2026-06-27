@@ -451,7 +451,7 @@ def register_release_tools(mcp) -> None:  # noqa: C901
           - get auto-enriches with notes and tasks (parallel sub-fetches).
             Failed sub-fetches surface as _<key>_warning.
         """
-        action = normalize_action(action)
+        action = normalize_action(action, _READ_RELEASE)
         if not action:
             if release_id:
                 action = "get"
@@ -532,7 +532,7 @@ def register_release_tools(mcp) -> None:  # noqa: C901
           - due_date, notify_before, group_id (task)
           - te_agent_id, executed_at, task_id, billable (time entry)
         """
-        action = normalize_action(action)
+        action = normalize_action(action, _WRITE_RELEASE)
         err = reject_unless_in(action, _WRITE_RELEASE, "manage_release", "read_release")
         if err:
             return err

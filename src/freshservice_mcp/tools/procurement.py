@@ -166,7 +166,7 @@ def register_procurement_tools(mcp) -> None:
 
         Optional: page, per_page (list).
         """
-        action = normalize_action(action)
+        action = normalize_action(action, _READ_PO)
         err = reject_unless_in(action, _READ_PO, "read_purchase_order", "manage_purchase_order")
         if err:
             return err
@@ -215,7 +215,7 @@ def register_procurement_tools(mcp) -> None:
         Tax: per-item tax (in purchase_items) and per-order tax_percentage
         are independent — setting both will double-tax.
         """
-        action = normalize_action(action)
+        action = normalize_action(action, _WRITE_PO)
         err = reject_unless_in(action, _WRITE_PO, "manage_purchase_order", "read_purchase_order")
         if err:
             return err
@@ -355,7 +355,7 @@ def register_procurement_tools(mcp) -> None:
 
         Optional: page, per_page (list).
         """
-        action = normalize_action(action)
+        action = normalize_action(action, _READ_VENDOR)
         err = reject_unless_in(action, _READ_VENDOR, "read_vendor", "manage_vendor")
         if err:
             return err
@@ -387,7 +387,7 @@ def register_procurement_tools(mcp) -> None:
         Optional: description, primary_email, address, contact_name, phone,
         custom_fields.
         """
-        action = normalize_action(action)
+        action = normalize_action(action, _WRITE_VENDOR)
         err = reject_unless_in(action, _WRITE_VENDOR, "manage_vendor", "read_vendor")
         if err:
             return err

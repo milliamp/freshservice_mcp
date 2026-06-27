@@ -361,7 +361,7 @@ def register_assets_tools(mcp) -> None:
           display_id → get, search_query → search,
           filter_query → filter, asset_type_id → get_type, else list.
         """
-        action = normalize_action(action)
+        action = normalize_action(action, _READ_ASSET)
         if not action:
             if display_id:
                 action = "get"
@@ -434,7 +434,7 @@ def register_assets_tools(mcp) -> None:
           asset_fields (update alternative payload),
           parent_asset_type_id / visible (create_type).
         """
-        action = normalize_action(action)
+        action = normalize_action(action, _WRITE_ASSET)
         err = reject_unless_in(action, _WRITE_ASSET, "manage_asset", "read_asset")
         if err:
             return err
@@ -470,7 +470,7 @@ def register_assets_tools(mcp) -> None:
             action: 'components', 'assignment_history', 'requests', 'contracts'
             display_id: The asset display ID
         """
-        action = normalize_action(action)
+        action = normalize_action(action, _READ_ASSET_DETAILS)
         err = reject_unless_in(action, _READ_ASSET_DETAILS, "read_asset_details", "(no write counterpart)")
         if err:
             return err
@@ -616,7 +616,7 @@ def register_assets_tools(mcp) -> None:
             page: Page number (list_all)
             per_page: Items per page (list_all)
         """
-        action = normalize_action(action)
+        action = normalize_action(action, _READ_ASSET_RELATIONSHIP)
         err = reject_unless_in(action, _READ_ASSET_RELATIONSHIP, "read_asset_relationship", "manage_asset_relationship")
         if err:
             return err
@@ -642,7 +642,7 @@ def register_assets_tools(mcp) -> None:
                 Each dict: {relationship_type_id, primary_id, primary_type,
                             secondary_id, secondary_type}
         """
-        action = normalize_action(action)
+        action = normalize_action(action, _WRITE_ASSET_RELATIONSHIP)
         err = reject_unless_in(action, _WRITE_ASSET_RELATIONSHIP, "manage_asset_relationship", "read_asset_relationship")
         if err:
             return err

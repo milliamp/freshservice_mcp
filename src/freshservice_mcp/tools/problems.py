@@ -437,7 +437,7 @@ def register_problem_tools(mcp) -> None:  # noqa: C901
           - get auto-enriches with notes and tasks (parallel sub-fetches).
             Failed sub-fetches surface as _<key>_warning.
         """
-        action = normalize_action(action)
+        action = normalize_action(action, _READ_PROBLEM)
         if not action:
             if problem_id:
                 action = "get"
@@ -517,7 +517,7 @@ def register_problem_tools(mcp) -> None:  # noqa: C901
           - due_date, notify_before, group_id (task)
           - te_agent_id, executed_at, task_id, billable (time entry)
         """
-        action = normalize_action(action)
+        action = normalize_action(action, _WRITE_PROBLEM)
         err = reject_unless_in(action, _WRITE_PROBLEM, "manage_problem", "read_problem")
         if err:
             return err

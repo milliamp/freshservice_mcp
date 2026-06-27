@@ -532,7 +532,7 @@ def register_tickets_tools(mcp) -> None:  # noqa: C901
             Relational: :>, :<. Null: field:null.
             Example: "agent_id:120002355359 AND status:2"
         """
-        action = normalize_action(action)
+        action = normalize_action(action, _READ_TICKET)
         if not action:
             # Smart default: infer from which params the caller supplied.
             if ticket_id:
@@ -619,7 +619,7 @@ def register_tickets_tools(mcp) -> None:  # noqa: C901
           - executed_at, task_id, billable, timer_running (time entries)
           - approval_type, email_content (add_approval)
         """
-        action = normalize_action(action)
+        action = normalize_action(action, _WRITE_TICKET)
         err = reject_unless_in(action, _WRITE_TICKET, "manage_ticket", "read_ticket")
         if err:
             return err
@@ -713,7 +713,7 @@ def register_tickets_tools(mcp) -> None:  # noqa: C901
           get_requested_items: ticket_id
         Optional: page, per_page (list_items).
         """
-        action = normalize_action(action)
+        action = normalize_action(action, _READ_SERVICE_CATALOG)
         err = reject_unless_in(action, _READ_SERVICE_CATALOG, "read_service_catalog", "manage_service_catalog")
         if err:
             return err
@@ -737,7 +737,7 @@ def register_tickets_tools(mcp) -> None:  # noqa: C901
           place_request: display_id, email
         Optional: requested_for (target user email), quantity (default 1).
         """
-        action = normalize_action(action)
+        action = normalize_action(action, _WRITE_SERVICE_CATALOG)
         err = reject_unless_in(action, _WRITE_SERVICE_CATALOG, "manage_service_catalog", "read_service_catalog")
         if err:
             return err

@@ -184,7 +184,7 @@ def register_requesters_tools(mcp) -> None:
 
         Optional: include_agents (filter), page, per_page (list).
         """
-        action = normalize_action(action)
+        action = normalize_action(action, _READ_REQUESTER)
         err = reject_unless_in(action, _READ_REQUESTER, "read_requester", "manage_requester")
         if err:
             return err
@@ -232,7 +232,7 @@ def register_requesters_tools(mcp) -> None:
         location_id, background_information, custom_fields,
         can_see_all_tickets_from_associated_departments.
         """
-        action = normalize_action(action)
+        action = normalize_action(action, _WRITE_REQUESTER)
         err = reject_unless_in(action, _WRITE_REQUESTER, "manage_requester", "read_requester")
         if err:
             return err
@@ -342,7 +342,7 @@ def register_requesters_tools(mcp) -> None:
 
         Optional: page, per_page (list).
         """
-        action = normalize_action(action)
+        action = normalize_action(action, _READ_REQUESTER_GROUP)
         err = reject_unless_in(action, _READ_REQUESTER_GROUP, "read_requester_group", "manage_requester_group")
         if err:
             return err
@@ -365,7 +365,7 @@ def register_requesters_tools(mcp) -> None:
 
         Optional: description.
         """
-        action = normalize_action(action)
+        action = normalize_action(action, _WRITE_REQUESTER_GROUP)
         err = reject_unless_in(action, _WRITE_REQUESTER_GROUP, "manage_requester_group", "read_requester_group")
         if err:
             return err

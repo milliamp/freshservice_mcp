@@ -118,7 +118,7 @@ def register_products_tools(mcp) -> None:
 
         Optional: page, per_page (list).
         """
-        action = normalize_action(action)
+        action = normalize_action(action, _READ_PRODUCT)
         err = reject_unless_in(action, _READ_PRODUCT, "read_product", "manage_product")
         if err:
             return err
@@ -152,7 +152,7 @@ def register_products_tools(mcp) -> None:
         'lease'), depreciation_type_id, description (HTML), description_text
         (plain).
         """
-        action = normalize_action(action)
+        action = normalize_action(action, _WRITE_PRODUCT)
         err = reject_unless_in(action, _WRITE_PRODUCT, "manage_product", "read_product")
         if err:
             return err

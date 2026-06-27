@@ -50,7 +50,7 @@ def register_misc_tools(mcp) -> None:  # noqa: C901
             response_id: Required for get
             folder_id: Required for get_folder
         """
-        action = normalize_action(action)
+        action = normalize_action(action, _READ_CANNED)
         err = reject_unless_in(action, _READ_CANNED, "read_canned_response", "(no write counterpart)")
         if err:
             return err
@@ -109,7 +109,7 @@ def register_misc_tools(mcp) -> None:  # noqa: C901
             action: 'list', 'get'
             workspace_id: Required for get
         """
-        action = normalize_action(action)
+        action = normalize_action(action, _READ_WORKSPACE)
         err = reject_unless_in(action, _READ_WORKSPACE, "read_workspace", "(no write counterpart)")
         if err:
             return err
@@ -150,7 +150,7 @@ def register_misc_tools(mcp) -> None:  # noqa: C901
             action: 'list', 'get'
             role_id: Required for get
         """
-        action = normalize_action(action)
+        action = normalize_action(action, _READ_AGENT_ROLE)
         err = reject_unless_in(action, _READ_AGENT_ROLE, "read_agent_role", "(no write counterpart)")
         if err:
             return err
@@ -191,7 +191,7 @@ def register_misc_tools(mcp) -> None:  # noqa: C901
             action: 'list', 'get'
             business_hour_id: Required for get
         """
-        action = normalize_action(action)
+        action = normalize_action(action, _READ_BUSINESS_HOUR)
         err = reject_unless_in(action, _READ_BUSINESS_HOUR, "read_business_hour", "(no write counterpart)")
         if err:
             return err
@@ -232,7 +232,7 @@ def register_misc_tools(mcp) -> None:  # noqa: C901
             action: 'list', 'get'
             sla_id: Required for get
         """
-        action = normalize_action(action)
+        action = normalize_action(action, _READ_SLA_POLICY)
         err = reject_unless_in(action, _READ_SLA_POLICY, "read_sla_policy", "(no write counterpart)")
         if err:
             return err
@@ -325,7 +325,7 @@ def register_misc_tools(mcp) -> None:  # noqa: C901
             page: Page number (list)
             per_page: Items per page 1-100 (list)
         """
-        action = normalize_action(action)
+        action = normalize_action(action, _READ_ALERT)
         err = reject_unless_in(action, _READ_ALERT, "read_alert", "manage_alert")
         if err:
             return err
@@ -342,7 +342,7 @@ def register_misc_tools(mcp) -> None:  # noqa: C901
             action: 'delete'
             alert_id: Required
         """
-        action = normalize_action(action)
+        action = normalize_action(action, _WRITE_ALERT)
         err = reject_unless_in(action, _WRITE_ALERT, "manage_alert", "read_alert")
         if err:
             return err
@@ -370,7 +370,7 @@ def register_misc_tools(mcp) -> None:  # noqa: C901
             audit_type: Filter by audit type string (optional)
             actor: Filter by actor, e.g. {"id": 123, "type": "user"} (optional)
         """
-        action = normalize_action(action)
+        action = normalize_action(action, _READ_AUDIT)
         err = reject_unless_in(action, _READ_AUDIT, "read_audit_log", "(no write counterpart)")
         if err:
             return err
@@ -478,7 +478,7 @@ def register_misc_tools(mcp) -> None:  # noqa: C901
             page: Page number (list)
             per_page: Items per page 1-100 (list)
         """
-        action = normalize_action(action)
+        action = normalize_action(action, _READ_ONBOARDING)
         err = reject_unless_in(action, _READ_ONBOARDING, "read_onboarding_request", "manage_onboarding_request")
         if err:
             return err
@@ -495,7 +495,7 @@ def register_misc_tools(mcp) -> None:  # noqa: C901
             action: 'create'
             fields: Request field data dict (required for create)
         """
-        action = normalize_action(action)
+        action = normalize_action(action, _WRITE_ONBOARDING)
         err = reject_unless_in(action, _WRITE_ONBOARDING, "manage_onboarding_request", "read_onboarding_request")
         if err:
             return err
@@ -577,7 +577,7 @@ def register_misc_tools(mcp) -> None:  # noqa: C901
             page: Page number (list)
             per_page: Items per page 1-100 (list)
         """
-        action = normalize_action(action)
+        action = normalize_action(action, _READ_OFFBOARDING)
         err = reject_unless_in(action, _READ_OFFBOARDING, "read_offboarding_request", "manage_offboarding_request")
         if err:
             return err
@@ -594,7 +594,7 @@ def register_misc_tools(mcp) -> None:  # noqa: C901
             action: 'create'
             fields: Request field data dict (required for create)
         """
-        action = normalize_action(action)
+        action = normalize_action(action, _WRITE_OFFBOARDING)
         err = reject_unless_in(action, _WRITE_OFFBOARDING, "manage_offboarding_request", "read_offboarding_request")
         if err:
             return err

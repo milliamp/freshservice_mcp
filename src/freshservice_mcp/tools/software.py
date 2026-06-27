@@ -163,7 +163,7 @@ def register_software_tools(mcp) -> None:
 
         Optional: workspace_id, page, per_page (list / list_licenses).
         """
-        action = normalize_action(action)
+        action = normalize_action(action, _READ_SOFTWARE)
         err = reject_unless_in(action, _READ_SOFTWARE, "read_software", "manage_software")
         if err:
             return err
@@ -198,7 +198,7 @@ def register_software_tools(mcp) -> None:
         Optional: description, application_type, status, publisher_id,
         managed_by_id, notes, category, sources, custom_fields.
         """
-        action = normalize_action(action)
+        action = normalize_action(action, _WRITE_SOFTWARE)
         err = reject_unless_in(action, _WRITE_SOFTWARE, "manage_software", "read_software")
         if err:
             return err

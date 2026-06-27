@@ -157,7 +157,7 @@ def register_announcements_tools(mcp) -> None:
 
         Optional: page, per_page (list).
         """
-        action = normalize_action(action)
+        action = normalize_action(action, _READ_ANNOUNCEMENT)
         err = reject_unless_in(action, _READ_ANNOUNCEMENT, "read_announcement", "manage_announcement")
         if err:
             return err
@@ -192,7 +192,7 @@ def register_announcements_tools(mcp) -> None:
         Optional: visible_till (ISO datetime), departments (ids), groups (ids),
         send_email (bool), additional_emails.
         """
-        action = normalize_action(action)
+        action = normalize_action(action, _WRITE_ANNOUNCEMENT)
         err = reject_unless_in(action, _WRITE_ANNOUNCEMENT, "manage_announcement", "read_announcement")
         if err:
             return err

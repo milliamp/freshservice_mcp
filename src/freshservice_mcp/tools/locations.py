@@ -148,7 +148,7 @@ def register_locations_tools(mcp) -> None:
 
         Optional: page, per_page.
         """
-        action = normalize_action(action)
+        action = normalize_action(action, _READ_LOCATION)
         err = reject_unless_in(action, _READ_LOCATION, "read_location", "manage_location")
         if err:
             return err
@@ -184,7 +184,7 @@ def register_locations_tools(mcp) -> None:
         Optional: line1, line2, city, state, country, zipcode (address);
         contact_name, email, phone, parent_location_id.
         """
-        action = normalize_action(action)
+        action = normalize_action(action, _WRITE_LOCATION)
         err = reject_unless_in(action, _WRITE_LOCATION, "manage_location", "read_location")
         if err:
             return err

@@ -248,7 +248,7 @@ def register_solutions_tools(mcp) -> None:
           list_articles: folder_id
           get_article: article_id
         """
-        action = normalize_action(action)
+        action = normalize_action(action, _READ_SOLUTION)
         err = reject_unless_in(action, _READ_SOLUTION, "read_solution", "manage_solution")
         if err:
             return err
@@ -296,7 +296,7 @@ def register_solutions_tools(mcp) -> None:
           description, workspace_id, default_category (update_category),
           tags, keywords, review_date.
         """
-        action = normalize_action(action)
+        action = normalize_action(action, _WRITE_SOLUTION)
         err = reject_unless_in(action, _WRITE_SOLUTION, "manage_solution", "read_solution")
         if err:
             return err

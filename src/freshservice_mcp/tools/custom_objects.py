@@ -158,7 +158,7 @@ def register_custom_objects_tools(mcp) -> None:
 
         Optional: page, per_page (list_objects, list_records).
         """
-        action = normalize_action(action)
+        action = normalize_action(action, _READ_CUSTOM_OBJECT)
         err = reject_unless_in(action, _READ_CUSTOM_OBJECT, "read_custom_object", "manage_custom_object")
         if err:
             return err
@@ -180,7 +180,7 @@ def register_custom_objects_tools(mcp) -> None:
           update_record: type_id, record_id, data
           delete_record: type_id, record_id
         """
-        action = normalize_action(action)
+        action = normalize_action(action, _WRITE_CUSTOM_OBJECT)
         err = reject_unless_in(action, _WRITE_CUSTOM_OBJECT, "manage_custom_object", "read_custom_object")
         if err:
             return err

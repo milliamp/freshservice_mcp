@@ -234,7 +234,7 @@ def register_contracts_tools(mcp) -> None:
 
         Optional: page, per_page (list).
         """
-        action = normalize_action(action)
+        action = normalize_action(action, _READ_CONTRACT)
         err = reject_unless_in(action, _READ_CONTRACT, "read_contract", "manage_contract")
         if err:
             return err
@@ -285,7 +285,7 @@ def register_contracts_tools(mcp) -> None:
           visible_to_id, software_id, notify_to (emails),
           associated_asset_ids, item_cost_details, custom_fields
         """
-        action = normalize_action(action)
+        action = normalize_action(action, _WRITE_CONTRACT)
         err = reject_unless_in(action, _WRITE_CONTRACT, "manage_contract", "read_contract")
         if err:
             return err

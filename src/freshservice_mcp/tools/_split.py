@@ -40,15 +40,28 @@ _SYNONYMS: Dict[str, str] = {
 }
 
 
-def normalize_action(action: Optional[str]) -> str:
+def normalize_action(
+    action: Optional[str],
+    allowed: Optional[Iterable[str]] = None,
+) -> str:
     """Lowercase, strip, and map common synonyms to canonical names.
 
+    If ``allowed`` is provided and the input action is already canonical
+    for that tool, the synonym table is skipped. This matters when a tool
+    has both a canonical name AND its synonym as distinct actions — e.g.
+    read_asset has both ``search`` (free-text) and ``filter`` (structured
+    query), so a caller asking for ``search`` must NOT silently become
+    ``filter``. Same for ``view`` on read_change_note (where ``view`` is
+    the canonical action) and ``list_all`` on read_asset_relationship.
+
     Returns an empty string if ``action`` is None/non-str so callers can
-    then apply their own smart-default logic.
+    apply their own smart-default logic.
     """
     if not isinstance(action, str):
         return ""
     a = action.lower().strip()
+    if allowed is not None and a in allowed:
+        return a
     return _SYNONYMS.get(a, a)
 
 

@@ -336,7 +336,7 @@ def register_project_tools(mcp) -> None:  # noqa: C901
         Optional: filter (list: completed|incomplete|archived|open|in_progress),
         page, per_page.
         """
-        action = normalize_action(action)
+        action = normalize_action(action, _READ_PROJECT)
         err = reject_unless_in(action, _READ_PROJECT, "read_project", "manage_project")
         if err:
             return err
@@ -396,7 +396,7 @@ def register_project_tools(mcp) -> None:  # noqa: C901
           manager_id, start_date, end_date, sprint_duration, custom_fields,
           project_template_id (create only).
         """
-        action = normalize_action(action)
+        action = normalize_action(action, _WRITE_PROJECT)
         err = reject_unless_in(action, _WRITE_PROJECT, "manage_project", "read_project")
         if err:
             return err
@@ -746,7 +746,7 @@ def register_project_tools(mcp) -> None:  # noqa: C901
 
         Optional: filter (list), page, per_page.
         """
-        action = normalize_action(action)
+        action = normalize_action(action, _READ_PROJECT_TASK)
         err = reject_unless_in(action, _READ_PROJECT_TASK, "read_project_task", "manage_project_task")
         if err:
             return err
@@ -814,7 +814,7 @@ def register_project_tools(mcp) -> None:  # noqa: C901
         planned_effort (e.g. '1w 2d 3h 4m'), story_points, sprint_id,
         version_id, custom_fields.
         """
-        action = normalize_action(action)
+        action = normalize_action(action, _WRITE_PROJECT_TASK)
         err = reject_unless_in(action, _WRITE_PROJECT_TASK, "manage_project_task", "read_project_task")
         if err:
             return err
