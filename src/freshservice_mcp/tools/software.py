@@ -4,11 +4,20 @@ Each tool is exposed as a read_/manage_ pair so MCP clients can grant
 read-only or read-write access independently.
 
 Tools:
-  - read_software / manage_software — list/get/list_licenses vs create/update
+  - read_software / manage_software
+      — list/get/list_users/list_installations/list_licenses vs create/update
+      — get auto-enriches with users + installations (first page)
 """
 from typing import Any, Dict, List, Optional
 
-from ..http_client import api_get, api_post, api_put, handle_error, parse_link_header
+from ..http_client import (
+    api_get,
+    api_post,
+    api_put,
+    gather_enrichments,
+    handle_error,
+    parse_link_header,
+)
 from ._split import normalize_action, reject_unless_in
 
 
@@ -18,7 +27,9 @@ def register_software_tools(mcp) -> None:
     # ------------------------------------------------------------------ #
     #  software — read/manage split                                       #
     # ------------------------------------------------------------------ #
-    _READ_SOFTWARE = {"list", "get", "list_licenses"}
+    _READ_SOFTWARE = {
+        "list", "get", "list_licenses", "list_users", "list_installations",
+    }
     _WRITE_SOFTWARE = {"create", "update"}
 
     async def _software_handler(
@@ -66,9 +77,61 @@ def register_software_tools(mcp) -> None:
             try:
                 resp = await api_get(f"applications/{software_id}")
                 resp.raise_for_status()
-                return resp.json()
+                result = resp.json()
             except Exception as e:
                 return handle_error(e, "get software")
+            # Auto-enrich with the first page of users and installations.
+            # For widely-deployed apps these can be paginated further via
+            # list_users / list_installations actions.
+            result.update(await gather_enrichments({
+                "users": f"applications/{software_id}/users?per_page=100",
+                "installations": f"applications/{software_id}/installations?per_page=100",
+            }))
+            return result
+
+        # ---------- list_users ----------
+        if action == "list_users":
+            if not software_id:
+                return {"error": "software_id required for list_users"}
+            params: Dict[str, Any] = {"page": page, "per_page": per_page}
+            try:
+                resp = await api_get(f"applications/{software_id}/users", params=params)
+                resp.raise_for_status()
+                pagination_info = parse_link_header(resp.headers.get("Link", ""))
+                return {
+                    **resp.json(),
+                    "pagination": {
+                        "current_page": page,
+                        "next_page": pagination_info.get("next"),
+                        "prev_page": pagination_info.get("prev"),
+                        "per_page": per_page,
+                    },
+                }
+            except Exception as e:
+                return handle_error(e, "list software users")
+
+        # ---------- list_installations ----------
+        if action == "list_installations":
+            if not software_id:
+                return {"error": "software_id required for list_installations"}
+            params = {"page": page, "per_page": per_page}
+            try:
+                resp = await api_get(
+                    f"applications/{software_id}/installations", params=params,
+                )
+                resp.raise_for_status()
+                pagination_info = parse_link_header(resp.headers.get("Link", ""))
+                return {
+                    **resp.json(),
+                    "pagination": {
+                        "current_page": page,
+                        "next_page": pagination_info.get("next"),
+                        "prev_page": pagination_info.get("prev"),
+                        "per_page": per_page,
+                    },
+                }
+            except Exception as e:
+                return handle_error(e, "list software installations")
 
         # ---------- create ----------
         if action == "create":
@@ -156,12 +219,18 @@ def register_software_tools(mcp) -> None:
     ) -> Dict[str, Any]:
         """Read Freshservice software / applications.
 
-        Actions: list, get, list_licenses
+        Actions: list, get, list_licenses, list_users, list_installations
 
         Required per action:
-          get: software_id
+          get / list_users / list_installations: software_id
 
-        Optional: workspace_id, page, per_page (list / list_licenses).
+        Optional: workspace_id, page, per_page.
+
+        Notes:
+          - get auto-enriches with the first page (up to 100 each) of
+            users and installations. Use list_users / list_installations
+            for paginated access on widely-deployed apps. Failed
+            enrichment surfaces as _<key>_warning.
         """
         action = normalize_action(action, _READ_SOFTWARE)
         err = reject_unless_in(action, _READ_SOFTWARE, "read_software", "manage_software")
