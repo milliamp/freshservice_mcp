@@ -30,7 +30,7 @@ from ..http_client import (
     handle_error,
     parse_link_header,
 )
-from ._split import normalize_action, reject_unless_in
+from ._split import coerce_payload, normalize_action, reject_unless_in
 
 
 def _validate_pagination(page: int, per_page: int) -> Optional[Dict[str, Any]]:
@@ -100,7 +100,7 @@ def register_tickets_tools(mcp) -> None:  # noqa: C901
         # long-tail
         payload: Optional[Dict[str, Any]],
     ) -> Dict[str, Any]:
-        pl: Dict[str, Any] = payload or {}
+        pl: Dict[str, Any] = coerce_payload(payload)
 
         # ── parent ticket ──────────────────────────────────────────────
         if action == "get_fields":
@@ -259,15 +259,20 @@ def register_tickets_tools(mcp) -> None:  # noqa: C901
             try:
                 if attachment_paths:
                     files = build_attachment_parts(attachment_paths)
-                    form: List[Tuple[str, str]] = [("body", body.strip())]
+                    # httpx 0.28+ requires data as a dict (not list of tuples)
+                    # when combined with files=; list values become repeated
+                    # keys in the multipart body.
+                    form: Dict[str, Any] = {"body": body.strip()}
                     if "from_email" in pl:
-                        form.append(("from_email", str(pl["from_email"])))
+                        form["from_email"] = str(pl["from_email"])
                     if "user_id" in pl:
-                        form.append(("user_id", str(pl["user_id"])))
-                    for email in pl.get("cc_emails") or []:
-                        form.append(("cc_emails[]", str(email)))
-                    for email in pl.get("bcc_emails") or []:
-                        form.append(("bcc_emails[]", str(email)))
+                        form["user_id"] = str(pl["user_id"])
+                    cc = pl.get("cc_emails") or []
+                    if cc:
+                        form["cc_emails[]"] = [str(e) for e in cc]
+                    bcc = pl.get("bcc_emails") or []
+                    if bcc:
+                        form["bcc_emails[]"] = [str(e) for e in bcc]
                     resp = await api_post_multipart(
                         f"tickets/{ticket_id}/reply", data=form, files=files,
                     )
@@ -293,9 +298,9 @@ def register_tickets_tools(mcp) -> None:  # noqa: C901
             try:
                 if attachment_paths:
                     files = build_attachment_parts(attachment_paths)
-                    form = [("body", body)]
+                    form: Dict[str, Any] = {"body": body}
                     if "private" in pl:
-                        form.append(("private", str(bool(pl["private"])).lower()))
+                        form["private"] = str(bool(pl["private"])).lower()
                     resp = await api_post_multipart(
                         f"tickets/{ticket_id}/notes", data=form, files=files,
                     )

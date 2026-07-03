@@ -17,7 +17,7 @@ from ..http_client import (
     gather_enrichments,
     handle_error,
 )
-from ._split import normalize_action, reject_unless_in
+from ._split import coerce_payload, normalize_action, reject_unless_in
 
 
 def register_problem_tools(mcp) -> None:  # noqa: C901
@@ -72,7 +72,7 @@ def register_problem_tools(mcp) -> None:  # noqa: C901
         # long-tail
         payload: Optional[Dict[str, Any]],
     ) -> Dict[str, Any]:
-        pl: Dict[str, Any] = payload or {}
+        pl: Dict[str, Any] = coerce_payload(payload)
 
         # ── parent ─────────────────────────────────────────────────────
         if action == "list":

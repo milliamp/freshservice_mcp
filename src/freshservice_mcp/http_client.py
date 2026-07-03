@@ -59,10 +59,17 @@ def build_attachment_parts(
 
 async def api_post_multipart(
     path: str,
-    data: List[Tuple[str, str]],
+    data: Dict[str, Any],
     files: List[Tuple[str, Tuple[str, bytes, str]]],
 ) -> httpx.Response:
-    """POST to Freshservice as multipart/form-data (for attachment uploads)."""
+    """POST to Freshservice as multipart/form-data (for attachment uploads).
+
+    ``data`` MUST be a dict; on httpx 0.28+ passing a list-of-tuples data
+    together with ``files`` raises "Attempted to send an sync request with
+    an AsyncClient instance." Dict form works, and list values are still
+    repeated for the same key (so ``{"cc_emails[]": ["a", "b"]}`` becomes
+    ``cc_emails[]=a & cc_emails[]=b`` in the multipart body).
+    """
     async with httpx.AsyncClient() as client:
         return await client.post(
             api_url(path),

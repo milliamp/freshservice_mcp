@@ -6,7 +6,29 @@ handler; the guard below validates that the caller's ``action`` is allowed
 for the wrapper they invoked, so MCP clients can grant read-only or
 read-write permissions independently.
 """
+import json
 from typing import Any, Dict, Iterable, Optional
+
+
+def coerce_payload(payload: Any) -> Dict[str, Any]:
+    """Return a dict from ``payload``, tolerating JSON-string form.
+
+    Some MCP clients serialize dict-typed arguments as JSON strings on the
+    wire (observed live: ``payload='{"attachments": ["…"]}'``). This
+    helper transparently parses that back to a dict; a plain dict passes
+    through; anything else (or a malformed string) becomes an empty dict.
+    """
+    if payload is None:
+        return {}
+    if isinstance(payload, dict):
+        return payload
+    if isinstance(payload, str):
+        try:
+            parsed = json.loads(payload)
+            return parsed if isinstance(parsed, dict) else {}
+        except (json.JSONDecodeError, TypeError):
+            return {}
+    return {}
 
 
 # Common natural-language synonyms LLMs reach for when they don't know the
