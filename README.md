@@ -1,6 +1,14 @@
 # Freshservice MCP Server
 
-[![smithery badge](https://smithery.ai/badge/@effytech/freshservice_mcp)](https://smithery.ai/server/@effytech/freshservice_mcp)
+## About This Fork
+
+This repository is an **independently maintained fork** of [`effytech/freshservice_mcp`](https://github.com/effytech/freshservice_mcp), continued here because active development on the upstream project has slowed. It is now developed as its own product and is **not intended to stay in sync with upstream**.
+
+- **Original project:** https://github.com/effytech/freshservice_mcp — © the original authors (see `pyproject.toml` and `LICENSE`).
+- **Fork point:** upstream commit [`2b6554b`](https://github.com/effytech/freshservice_mcp/commit/2b6554b58b30dd9c2199721f67f8e25752aacbbb) *"Merge pull request #15 from adamwestland/feature/add-changes-support"* (2025-10-06). Everything at or before that commit is upstream's work; everything after is this fork's.
+- **What this fork adds** (relative to the fork point): a modular scope-based architecture, a `read_*` / `manage_*` permission split on every resource, consolidated sub-entity handling on tickets / problems / releases, coverage for many additional Freshservice resources (assets/CMDB, projects, status pages, procurement, contracts, software, custom objects, announcements, and more), dynamic form-field discovery, and other quality-of-life changes to the tool surface.
+
+The MIT license is preserved from upstream. If you were previously using `@effytech/freshservice_mcp` via Smithery or PyPI, that continues to install the upstream package — install this fork directly from source (see [Getting Started](#getting-started)).
 
 ## Overview
 
@@ -49,264 +57,43 @@ Additionally, 2 **discovery tools** are always loaded regardless of scope:
 
 **Total: 71 tools** (69 scoped + 2 discovery), 49 read + 42 manage.
 
-## Tools Reference
+Detailed action lists, required/optional parameters, filter-query syntax, and enum values are documented on each tool's own MCP schema and docstring rather than duplicated here — the LLM sees them directly at call time, which is where that information belongs.
 
-Every tool uses a unified `action` parameter to select the operation. The action whitelist is enforced inside each tool — `read_*` accepts read actions, `manage_*` accepts write actions, and the rejection message tells the LLM which counterpart to call.
+### Design rationale
 
-### Ticket Management (`tickets` scope)
+The tool layout changed substantially between the fork point and today. The reasoning:
 
-**`read_ticket`** — Actions: `get`, `list`, `filter`, `get_fields`, `list_conversations`, `list_tasks`, `get_task`, `list_time_entries`, `get_time_entry`, `list_approvals`, `get_approval`
+- **Scope-based loading** — Upstream loaded every tool at startup. This fork grew Freshservice coverage from ~30 tools to 71, spanning tickets, changes, problems, releases, assets/CMDB, projects, status pages, procurement, contracts, software, custom objects and more. MCP clients enforce hard tool caps — VS Code Copilot maxes out at 128 tools across *all* servers combined — so opt-in scoping (via `FRESHSERVICE_SCOPES` env var or `--scope` CLI arg) lets deployments load only what the agent needs and stay under those limits.
+- **`read_*` / `manage_*` permission split** — Many agent workflows (triage, reporting, on-call summaries, root-cause analysis) legitimately need read access without any write capability. Others need both. Splitting every resource into a read tool and a manage tool lets MCP clients grant only the half a given agent needs, which is the standard least-privilege model and dramatically shrinks blast radius. It also makes the boundary explicit to the LLM: read tools are safe to try during exploration; manage tools change state. Both halves share the same private handler so behaviour can't drift — the wrappers only enforce the action whitelist and rejection messages point the LLM at the correct counterpart.
+- **Consolidated sub-entities** — A Freshservice ticket has conversations, tasks, time entries, and approvals — each with list/get/create/update/delete. Exposing all of that as separate tools multiplies the tool count and forces the LLM to pick from ~25 similarly-named neighbours (`create_ticket_note`, `create_ticket_task`, `create_ticket_time_entry`, ...). Consolidating them behind a single `action` parameter on the parent tool cuts the surface, keeps documentation coherent, and matches how humans model tickets (a ticket *has* notes; notes aren't a first-class resource). Problem and Release are consolidated the same way. **Change is the deliberate exception**: `manage_change` already carries 26 planning fields, so folding sub-entities in would push its parameter surface past what an LLM can reliably handle, so the sub-entities stay as separate tools there.
+- **Unified `action` parameter with synonyms + smart defaults** — LLMs reach for different verbs for the same operation (`get`/`view`/`show`/`read`, `find`/`search`/`filter`, `list`/`index`/`all`). Every tool accepts a common set of synonyms and normalises them internally to the canonical name, so callers can use the verb that comes naturally without triggering "unknown action" errors. Read tools also apply a smart default when `action` is omitted: pass a `ticket_id` and it infers `get`; pass a `query` and it infers `filter`; pass neither and it infers `list`. This means many everyday calls collapse to a single argument.
+- **Dynamic form-field discovery** — Freshservice custom fields vary per tenant and per module, so any tool that touches user-defined fields would either hardcode them (brittle, wrong for most tenants) or force the caller to know them in advance. Two always-loaded discovery tools (`discover_form_fields` + `clear_field_cache`) hit the live tenant, cache field definitions for an hour, and give the LLM the ground truth it needs before it tries to write a custom field it doesn't understand.
 
-**`manage_ticket`** — Actions: `create`, `update`, `delete`, `reply`, `add_note`, `update_conversation`, `add_task`, `update_task`, `delete_task`, `add_time_entry`, `update_time_entry`, `delete_time_entry`, `add_approval`, `approve`, `reject`, `remind`
-
-| Action | Required | Notes |
-| ------ | -------- | ----- |
-| `create` | `subject`, `description`, (`email` OR `requester_id`) | Source / priority / status default if omitted; long-tail via `payload`. |
-| `update` / `delete` | `ticket_id` | |
-| `reply` / `add_note` | `ticket_id`, `body` | `payload.cc_emails`, `payload.bcc_emails`, `payload.private` etc. |
-| `add_task` | `ticket_id`, `title` | Optional: `description`, `status`, `payload.{due_date, notify_before, group_id, agent_id}` |
-| `update_task` / `delete_task` | `ticket_id`, `task_id` | |
-| `add_time_entry` | `ticket_id`, `time_spent`, `payload.te_agent_id` | `body` becomes the work note; `payload.billable`, `payload.executed_at` etc. |
-| `add_approval` | `ticket_id`, `approver_id` | `payload.approval_type`, `payload.email_content` |
-| `approve` / `reject` / `remind` | `ticket_id`, `approval_id` | |
-
-**`read_service_catalog`** — Actions: `list_items`, `get_requested_items`. **`manage_service_catalog`** — Action: `place_request`.
-
-### Change Management (`changes` scope)
-
-Change family stays as separate sub-entity tools (unlike ticket/problem/release) because `manage_change` itself already carries 26 planning fields — merging the sub-entities would push the parameter surface past the point an LLM can handle reliably.
-
-**`read_change`** — Actions: `get`, `list`, `filter`, `get_fields`
-**`manage_change`** — Actions: `create`, `update`, `delete`, `close`, `move`
-
-| Action | Required | Notes |
-| ------ | -------- | ----- |
-| `create` | `requester_id`, `subject`, `description`, `priority`, `impact`, `status`, `risk`, `change_type` | `planning_fields`*, `assets`, `impacted_services`, `custom_fields`, `agent_id`, `group_id` |
-| `update` | `change_id` | any updatable field including `planning_fields`, `impacted_services` |
-| `close` | `change_id` | `body` (result explanation) |
-| `move` | `change_id` | move between workspaces |
-
-> *`planning_fields` on create are handled transparently via a 2-step process (POST + PUT) to work around a Freshservice API limitation.
-> **`impacted_services`** is distinct from `assets`: use `assets` for CI associations (`[{"display_id": N}]`) and `impacted_services` for business service impact declarations (`[{"id": N, "status": 1}]`). Service statuses: 1=Operational, 5=Under maintenance, 10=Degraded, 20=Partial outage, 30=Major outage.
-
-- **`read_change_note`** / **`manage_change_note`** — list/view vs create/update/delete
-- **`read_change_task`** / **`manage_change_task`** — list/view vs create/update/delete
-- **`read_change_time_entry`** / **`manage_change_time_entry`** — list/view vs create/update/delete
-- **`read_change_approval`** / **`manage_change_approval`** — list_groups/list/view vs create_group/update_group/cancel_group/remind/cancel/set_chain_rule
-
-### Problem Management (`problems` scope)
-
-Problem family is fully consolidated — `read_problem` and `manage_problem` cover the parent plus notes, tasks, and time entries.
-
-**`read_problem`** — Actions: `get`, `list`, `filter`, `get_fields`, `list_notes`, `get_note`, `list_tasks`, `get_task`, `list_time_entries`, `get_time_entry`
-
-**`manage_problem`** — Actions: `create`, `update`, `delete`, `close`, `restore`, `add_note`, `update_note`, `delete_note`, `add_task`, `update_task`, `delete_task`, `add_time_entry`, `update_time_entry`, `delete_time_entry`
-
-| Action | Required | Notes |
-| ------ | -------- | ----- |
-| `create` | `requester_id`, `subject`, `description`, `priority`, `status`, `impact`, `due_by` | `payload.agent_id`, `payload.assets`, `payload.analysis_fields`, etc. |
-| `add_note` | `problem_id`, `body` | |
-| `add_task` | `problem_id`, `title` | Optional: `description`, `status`, `payload.{due_date, notify_before, group_id}` |
-| `add_time_entry` | `problem_id`, `time_spent` | `body` = work note; `payload.te_agent_id`, `payload.billable` etc. |
-
-Priority: 1=Low, 2=Medium, 3=High, 4=Urgent · Status: 1=Open, 2=Change Requested, 3=Closed · Impact: 1=Low, 2=Medium, 3=High
-
-### Release Management (`releases` scope)
-
-Release family is fully consolidated — `read_release` and `manage_release` cover the parent plus notes, tasks, and time entries.
-
-**`read_release`** — Actions: `get`, `list`, `filter`, `get_fields`, `list_notes`, `get_note`, `list_tasks`, `get_task`, `list_time_entries`, `get_time_entry`
-
-**`manage_release`** — Actions: `create`, `update`, `delete`, `restore`, `add_note`, `update_note`, `delete_note`, `add_task`, `update_task`, `delete_task`, `add_time_entry`, `update_time_entry`, `delete_time_entry`
-
-| Action | Required | Notes |
-| ------ | -------- | ----- |
-| `create` | `subject`, `description`, `priority`, `status`, `release_type`, `planned_start_date`, `planned_end_date` | `payload.planning_fields`* | `payload.{work_start_date, agent_id, assets, custom_fields, ...}` |
-| Sub-entity adds/updates | parent id + entity id | Same pattern as problems. |
-
-> *Like changes, `planning_fields` on create uses transparent 2-step handling (POST then PUT).
-
-Priority: 1=Low, 2=Medium, 3=High, 4=Urgent · Status: 1=Open, 2=On hold, 3=In Progress, 4=Incomplete, 5=Completed · Type: 1=Minor, 2=Standard, 3=Major, 4=Emergency
-
-### Asset / CMDB Management (`assets` scope)
-
-**`read_asset`** — Actions: `list`, `get`, `search`, `filter`, `get_types`, `get_type`, `get_type_fields`
-**`manage_asset`** — Actions: `create`, `update`, `delete`, `delete_permanently`, `restore`, `move`, `create_type`
-
-**`read_asset_details`** — Actions: `get_components`, `get_requests`, `get_contracts`, `get_installed_software`, `get_assignment_history` (no write counterpart — all sub-resource GETs)
-
-**`read_asset_relationship`** / **`manage_asset_relationship`** — list/list_all/get/get_types/job_status vs create/delete
-
-### Status Page (`status_page` scope)
-
-**`read_status_page`** / **`manage_status_page`** — Maintenance windows, incidents, service components, and subscribers.
-
-All actions auto-discover `status_page_id` if omitted. Maintenance CRUD requires either `change_id` **or** `maintenance_window_id` as the source entity. Incident CRUD requires `ticket_id`.
-
- > **Publishing maintenance on the Status Page — workflow:**
->
-> 1. Check the Change: `manage_change` action=`get` → inspect `maintenance_window`
-> 2. **If `maintenance_window` has an `id`** → use `change_id` directly in `create_maintenance`
-> 3. **If `maintenance_window` is empty `{}`** → create a MW with `manage_maintenance_window` action=`create` passing `change_id` (auto-associates the MW with the Change), then use the returned `maintenance_window_id` in `create_maintenance`
-> 4. Required fields for `create_maintenance`: `title`, `description`, `started_at`, `ended_at`, `impacted_services` (get component IDs via `list_components`)
-
-**`read_maintenance_window`** / **`manage_maintenance_window`** — CRUD for Maintenance Windows. Pass `change_id` on create to auto-associate.
-
-| Action | Required Parameters |
-| ------ | ------------------- |
-| `list` | — |
-| `get` | `maintenance_window_id` |
-| `create` | `name`, `start_time`, `end_time` + optional `change_id` (auto-associates) |
-| `update` | `maintenance_window_id` |
-| `delete` | `maintenance_window_id` |
-
-**`manage_status_page`** / **`read_status_page`** actions:
-
-| Action | Required Parameters |
-| ------ | ------------------- |
-| **Pages** | |
-| `list_pages` | — |
-| **Service Components** | |
-| `list_components` | — |
-| `get_component` | `component_id` |
-| **Maintenance** (from Change or MW) | |
-| `list_maintenance` | — |
-| `create_maintenance` | `change_id` or `maintenance_window_id`, `title`, `description`, `started_at`, `ended_at`, `impacted_services` |
-| `get_maintenance` | `change_id` or `maintenance_window_id`, `maintenance_id` |
-| `update_maintenance` | `change_id` or `maintenance_window_id`, `maintenance_id` |
-| `delete_maintenance` | `change_id` or `maintenance_window_id`, `maintenance_id` |
-| **Maintenance Updates** | |
-| `list_maintenance_updates` | `change_id` or `maintenance_window_id`, `maintenance_id` |
-| `create_maintenance_update` | `change_id` or `maintenance_window_id`, `maintenance_id`, `body` |
-| `update_maintenance_update` | `change_id` or `maintenance_window_id`, `maintenance_id`, `update_id` |
-| `delete_maintenance_update` | `change_id` or `maintenance_window_id`, `maintenance_id`, `update_id` |
-| **Incidents** (from Ticket) | |
-| `list_incidents` | — |
-| `create_incident` | `ticket_id`, `title` |
-| `get_incident` / `update_incident` / `delete_incident` | `ticket_id`, `incident_id` |
-| **Incident Updates** | |
-| `list_incident_updates` | `ticket_id`, `incident_id` |
-| `create_incident_update` | `ticket_id`, `incident_id`, `body` |
-| `update_incident_update` | `ticket_id`, `incident_id`, `update_id` |
-| `delete_incident_update` | `ticket_id`, `incident_id`, `update_id` |
-| **Statuses** | |
-| `list_maintenance_statuses` / `list_incident_statuses` | — |
-| **Subscribers** | |
-| `list_subscribers` | — |
-| `get_subscriber` | `subscriber_id` |
-| `create_subscriber` | `email` |
-| `update_subscriber` | `subscriber_id` |
-| `delete_subscriber` | `subscriber_id` |
-
-Key fields: `started_at` (ISO datetime), `ended_at`, `impacted_services` (`[{id, status}]`), `notifications` (`[{trigger, options}]`), `description`.
-
-### Project Management (`projects` scope)
-
-**`read_project`** — Actions: `get`, `list`, `get_fields`, `get_templates`, `get_memberships`, `get_associations`, `get_versions`, `get_sprints`
-**`manage_project`** — Actions: `create`, `update`, `delete`, `archive`, `restore`, `add_members`, `create_association`, `delete_association`
-
-| Action | Required Parameters | Optional Parameters |
-| ------ | ------------------- | ------------------- |
-| `list` | — | `filter` (`completed`, `incomplete`, `archived`, `open`, `in_progress`), `page`, `per_page` |
-| `get` | `project_id` | — |
-| `create` | `name`, `project_type` (0=Software, 1=Business) | `description`, `key`, `priority_id`, `manager_id`, `start_date`, `end_date`, `visibility`, `sprint_duration`, `project_template_id`, `custom_fields` |
-| `update` | `project_id` | any updatable field |
-| `delete` | `project_id` | — |
-| `archive` / `restore` | `project_id` | — |
-| `get_fields` | — | — |
-| `get_templates` | — | — |
-| `add_members` | `project_id`, `members` (`[{"email": "...", "role": 1}]`) | — |
-| `get_memberships` | `project_id` | — |
-| `create_association` | `project_id`, `module_name` (`tickets`/`problems`/`changes`/`assets`), `ids` | — |
-| `get_associations` | `project_id`, `module_name` | — |
-| `delete_association` | `project_id`, `module_name`, `association_id` | — |
-| `get_versions` / `get_sprints` | `project_id` | — |
-
-Priority: 1=Low, 2=Medium, 3=High, 4=Urgent · Status: 1=Yet to start, 2=In Progress, 3=Completed · Visibility: 0=Private, 1=Public
-
-**`read_project_task`** — Actions: `get`, `list`, `filter`, `get_task_types`, `get_task_type_fields`, `get_task_statuses`, `get_task_priorities`, `list_notes`, `get_associations`
-**`manage_project_task`** — Actions: `create`, `update`, `delete`, `create_note`, `update_note`, `delete_note`, `create_association`, `delete_association`
-
-| Action | Required Parameters | Optional Parameters |
-| ------ | ------------------- | ------------------- |
-| `list` | `project_id` | `filter`, `page`, `per_page` |
-| `get` | `project_id`, `task_id` | — |
-| `create` | `project_id`, `title`, `type_id` | `description`, `status_id`, `priority_id`, `assignee_id`, `reporter_id`, `parent_id`, `planned_start_date`, `planned_end_date`, `planned_effort`, `story_points`, `sprint_id`, `version_id`, `custom_fields` |
-| `update` | `project_id`, `task_id` | any updatable field |
-| `delete` | `project_id`, `task_id` | — |
-| `filter` | `project_id`, `query` | `page`, `per_page` |
-| `get_task_types` | `project_id` | — |
-| `get_task_type_fields` | `project_id`, `type_id` | — |
-| `get_task_statuses` / `get_task_priorities` | `project_id` | — |
-| `create_note` | `project_id`, `task_id`, `content` | — |
-| `list_notes` | `project_id`, `task_id` | — |
-| `update_note` | `project_id`, `task_id`, `note_id`, `content` | — |
-| `delete_note` | `project_id`, `task_id`, `note_id` | — |
-| `create_association` | `project_id`, `task_id`, `module_name`, `ids` | — |
-| `get_associations` | `project_id`, `task_id`, `module_name` | — |
-| `delete_association` | `project_id`, `task_id`, `module_name`, `association_id` | — |
-
-> Use `get_task_types` to discover available type_ids before creating tasks. The task UPDATE endpoint uses a singular path (`/task/` instead of `/tasks/`) — this is handled automatically.
-
-### Departments & Locations
-
-`departments` scope: **`read_department`** / **`manage_department`** — list/get/filter/get_fields vs create/update/delete
-
-`locations` scope: **`read_location`** / **`manage_location`** — list/get/filter vs create/update/delete
-
-### Agents & Requesters (`agents` / `requesters` scopes)
-
-- **`read_agent`** / **`manage_agent`** — list/get/filter/get_fields vs create/update
-- **`read_agent_group`** / **`manage_agent_group`** — list/get vs create/update
-- **`read_requester`** / **`manage_requester`** — list/get/filter/get_fields vs create/update/add_to_group
-- **`read_requester_group`** / **`manage_requester_group`** — list/get/list_members vs create/update
-
-### Solutions, Products, Procurement, Contracts, Software, Announcements, Custom Objects
-
-- `solutions`: **`read_solution`** / **`manage_solution`** — list/get categories/folders/articles vs create/update/publish
-- `products`: **`read_product`** / **`manage_product`** — list/get vs create/update
-- `procurement`: **`read_purchase_order`** / **`manage_purchase_order`**, **`read_vendor`** / **`manage_vendor`**
-- `contracts`: **`read_contract`** / **`manage_contract`** — list/get/get_types/get_type/get_type_fields vs create/update/delete
-- `software`: **`read_software`** / **`manage_software`** — list/get/list_licenses vs create/update
-- `announcements`: **`read_announcement`** / **`manage_announcement`** — list/get vs create/update/delete
-- `custom_objects`: **`read_custom_object`** / **`manage_custom_object`** — list_objects/get_object/list_records/get_record vs create_record/update_record/delete_record
-
-### Miscellaneous (`misc` scope)
-
-Lower-traffic resources. Several have no Freshservice write API and are read-only:
-
-- **`read_canned_response`**, **`read_workspace`**, **`read_agent_role`**, **`read_business_hour`**, **`read_sla_policy`**, **`read_audit_log`** — read-only (no manage counterpart)
-- **`read_alert`** / **`manage_alert`** — list/get vs delete
-- **`read_onboarding_request`** / **`manage_onboarding_request`** — list/get/get_tickets/get_fields vs create
-- **`read_offboarding_request`** / **`manage_offboarding_request`** — list/get/get_fields vs create
-
-### Query Syntax for Filtering
-
-When using `filter` actions, **the query string is automatically wrapped in double quotes** by the server. Pass the raw query:
-
-```text
-action: "filter", query: "status:3 AND priority:1"
-```
-
-**Common filter examples:**
-
-- `"status:3"` — Changes awaiting approval
-- `"priority:3 AND status:1"` — High priority open problems
-- `"planned_start_date:>'2025-07-14'"` — Changes starting after a date
+The net effect is a tool surface that scales past MCP client limits, holds up under least-privilege permissions, and stays legible to an LLM one prompt at a time.
 
 ## Getting Started
-
-### Installing via Smithery
-
-```bash
-npx -y @smithery/cli install @effytech/freshservice_mcp --client claude
-```
 
 ### Prerequisites
 
 - A Freshservice account ([freshservice.com](https://www.freshservice.com))
 - Freshservice API key
 - Python >= 3.10
+
+### Installing this fork
+
+Install directly from GitHub — the Smithery / PyPI listing for `@effytech/freshservice_mcp` installs the upstream package, not this fork.
+
+```bash
+pip install git+https://github.com/milliamp/freshservice_mcp.git@main
+```
+
+Or with `uv` (recommended for MCP tooling):
+
+```bash
+uv tool install git+https://github.com/milliamp/freshservice_mcp.git@main
+```
+
+Both expose the `freshservice-mcp` CLI entry-point.
 
 ### Configuration
 
@@ -317,13 +104,17 @@ Generate your Freshservice API key:
 
 ### Usage with Claude Desktop
 
-Add to your `claude_desktop_config.json`:
+Add to your `claude_desktop_config.json`. Point `uvx` at the fork's git URL — `uvx freshservice-mcp` on its own resolves to the upstream package on PyPI, not this fork:
 
 ```json
 "mcpServers": {
   "freshservice-mcp": {
     "command": "uvx",
-    "args": ["freshservice-mcp"],
+    "args": [
+      "--from",
+      "git+https://github.com/milliamp/freshservice_mcp.git@main",
+      "freshservice-mcp"
+    ],
     "env": {
       "FRESHSERVICE_APIKEY": "<YOUR_API_KEY>",
       "FRESHSERVICE_DOMAIN": "yourcompany.freshservice.com"
@@ -331,6 +122,8 @@ Add to your `claude_desktop_config.json`:
   }
 }
 ```
+
+If you've already run `uv tool install ...` (see [Installing this fork](#installing-this-fork)), you can simplify this to `"command": "freshservice-mcp"` with empty `args`.
 
 ### Usage with VS Code (Copilot)
 
@@ -448,10 +241,11 @@ Start the server manually for testing:
 FRESHSERVICE_APIKEY=<key> FRESHSERVICE_DOMAIN=<domain> python3 -m freshservice_mcp.server
 ```
 
-Or with uvx:
+Or with `uvx` against the fork's git URL (a bare `uvx freshservice-mcp` would resolve to upstream on PyPI):
 
 ```bash
-uvx freshservice-mcp --env FRESHSERVICE_APIKEY=<key> --env FRESHSERVICE_DOMAIN=<domain>
+FRESHSERVICE_APIKEY=<key> FRESHSERVICE_DOMAIN=<domain> \
+  uvx --from git+https://github.com/milliamp/freshservice_mcp.git@main freshservice-mcp
 ```
 
 ## Troubleshooting
@@ -464,14 +258,15 @@ uvx freshservice-mcp --env FRESHSERVICE_APIKEY=<key> --env FRESHSERVICE_DOMAIN=<
 
 ## License
 
-This MCP server is licensed under the MIT License. See the LICENSE file in the project repository for full details.
+This MCP server is licensed under the MIT License, inherited from the upstream project. See the `LICENSE` file for full details; original copyright is retained.
 
 ## Additional Resources
 
 - [Freshservice API Documentation](https://api.freshservice.com/)
+- [Upstream project (`effytech/freshservice_mcp`)](https://github.com/effytech/freshservice_mcp) — the fork point
 - [Claude Desktop Integration Guide](https://docs.anthropic.com/claude/docs/claude-desktop)
 - [MCP Protocol Specification](https://modelcontextprotocol.io/)
 
 ---
 
-<p align="center">Built with ❤️ by effy</p>
+<p align="center">Originally built by effy · forked and maintained by <a href="https://github.com/milliamp">milliamp</a>.</p>
