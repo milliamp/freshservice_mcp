@@ -11,8 +11,11 @@ Tools:
       — service-catalog browsing + service-request placement (sibling of
         tickets; not folded into manage_ticket).
 """
+import re
 import urllib.parse
 from typing import Any, Dict, List, Optional, Tuple, Union
+
+from mcp.server.fastmcp import Image
 
 from ..config import (
     TicketPriority,
@@ -26,11 +29,141 @@ from ..http_client import (
     api_post_multipart,
     api_put,
     build_attachment_parts,
+    download_bytes,
     gather_enrichments,
     handle_error,
     parse_link_header,
 )
 from ._split import coerce_payload, normalize_action, reject_unless_in
+
+
+# ── image content helpers ──────────────────────────────────────────────────
+# Freshservice caps single attachments at 40 MB; base64-encoding an image
+# roughly triples its wire size, so downloading big files bogs down the LLM
+# even more than the flag was meant to avoid. These caps keep the response
+# in a range Claude can actually consume.
+_MAX_IMAGE_BYTES = 5 * 1024 * 1024        # per-image
+_MAX_TOTAL_IMAGE_BYTES = 20 * 1024 * 1024  # across the whole response
+_MAX_IMAGES = 20
+
+# Match <img src="..."> (or single-quoted) in HTML bodies. Inline-pasted
+# screenshots in Freshservice descriptions/conversations land here.
+_IMG_SRC_RE = re.compile(r'<img[^>]+src=["\']([^"\']+)["\']', re.IGNORECASE)
+
+# Format hint FastMCP.Image accepts (must be the subtype only, not a MIME).
+_MIME_TO_FORMAT: Dict[str, str] = {
+    "image/png": "png",
+    "image/jpeg": "jpeg",
+    "image/jpg": "jpeg",
+    "image/gif": "gif",
+    "image/webp": "webp",
+    "image/bmp": "bmp",
+    "image/svg+xml": "svg+xml",
+}
+
+
+def _collect_image_refs(obj: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Return image references found on a ticket or conversation dict.
+
+    Two sources:
+      1. ``attachments[]`` entries whose ``content_type`` starts with ``image/``
+      2. ``<img src>`` tags in the ``description`` / ``body`` HTML, skipping
+         data: URIs and any URL already covered by an attachment record.
+
+    Each ref has: ``url``, ``mime`` (may be empty for inline srcs), ``name``,
+    ``source`` ("attachment" or "inline"), ``origin`` ("ticket"/"conversation:<id>").
+    """
+    refs: List[Dict[str, Any]] = []
+    seen_urls: set[str] = set()
+
+    for att in obj.get("attachments") or []:
+        if not isinstance(att, dict):
+            continue
+        mime = (att.get("content_type") or "").lower()
+        url = att.get("attachment_url")
+        if not url or not mime.startswith("image/"):
+            continue
+        if url in seen_urls:
+            continue
+        seen_urls.add(url)
+        refs.append({
+            "url": url,
+            "mime": mime,
+            "name": att.get("name") or "attachment",
+            "source": "attachment",
+            "attachment_id": att.get("id"),
+        })
+
+    for html_field in ("description", "body"):
+        html = obj.get(html_field)
+        if not isinstance(html, str) or not html:
+            continue
+        for src in _IMG_SRC_RE.findall(html):
+            if src.startswith("data:") or src in seen_urls:
+                continue
+            seen_urls.add(src)
+            refs.append({
+                "url": src,
+                "mime": "",
+                "name": src.rsplit("/", 1)[-1][:80] or "inline",
+                "source": "inline",
+            })
+
+    return refs
+
+
+async def _gather_images(refs: List[Dict[str, Any]]) -> Tuple[List[Image], List[Dict[str, Any]], List[Dict[str, Any]]]:
+    """Download refs sequentially, honoring per-image and total byte caps.
+
+    Sequential (not gather) so we can enforce the running total; the extra
+    latency is fine since this is off by default and a single ticket rarely
+    has more than a handful of screenshots.
+
+    Returns ``(images, manifest_entries, skipped_entries)``.
+    """
+    images: List[Image] = []
+    manifest: List[Dict[str, Any]] = []
+    skipped: List[Dict[str, Any]] = []
+    total = 0
+
+    for ref in refs[:_MAX_IMAGES]:
+        remaining = _MAX_TOTAL_IMAGE_BYTES - total
+        if remaining <= 0:
+            skipped.append({**ref, "reason": "total size cap reached"})
+            continue
+        try:
+            data, content_type = await download_bytes(ref["url"], max_bytes=min(_MAX_IMAGE_BYTES, remaining))
+        except Exception as e:  # noqa: BLE001
+            skipped.append({**ref, "reason": f"download failed: {e}"})
+            continue
+
+        mime = (content_type or ref.get("mime") or "").lower()
+        if not mime.startswith("image/"):
+            skipped.append({**ref, "reason": f"not an image (content-type: {mime or 'unknown'})"})
+            continue
+
+        fmt = _MIME_TO_FORMAT.get(mime, "png")
+        entry: Dict[str, Any] = {
+            "name": ref.get("name"),
+            "source": ref.get("source"),
+            "url": ref["url"],
+            "content_type": mime,
+            "size": len(data),
+        }
+        if ref.get("attachment_id") is not None:
+            entry["attachment_id"] = ref["attachment_id"]
+        if ref.get("origin"):
+            entry["origin"] = ref["origin"]
+
+        images.append(Image(data=data, format=fmt))
+        manifest.append(entry)
+        total += len(data)
+
+    if len(refs) > _MAX_IMAGES:
+        for ref in refs[_MAX_IMAGES:]:
+            skipped.append({**ref, "reason": f"image count cap reached ({_MAX_IMAGES})"})
+
+    return images, manifest, skipped
 
 
 def _validate_pagination(page: int, per_page: int) -> Optional[Dict[str, Any]]:
@@ -99,7 +232,9 @@ def register_tickets_tools(mcp) -> None:  # noqa: C901
         approver_id: Optional[int],
         # long-tail
         payload: Optional[Dict[str, Any]],
-    ) -> Dict[str, Any]:
+        # read-only extras
+        include_image_content: bool = False,
+    ) -> Any:
         pl: Dict[str, Any] = coerce_payload(payload)
 
         # ── parent ticket ──────────────────────────────────────────────
@@ -169,6 +304,20 @@ def register_tickets_tools(mcp) -> None:  # noqa: C901
             if result.get("ticket", {}).get("type") == "Service Request":
                 jobs["requested_items"] = f"tickets/{ticket_id}/requested_items"
             result.update(await gather_enrichments(jobs))
+
+            if include_image_content:
+                refs: List[Dict[str, Any]] = []
+                ticket_obj = result.get("ticket") or {}
+                for r in _collect_image_refs(ticket_obj):
+                    refs.append({**r, "origin": "ticket"})
+                images, manifest, skipped = await _gather_images(refs)
+                result["image_content"] = {
+                    "fetched": manifest,
+                    "skipped": skipped,
+                    "note": "Image bytes attached as separate image content blocks in this response.",
+                }
+                if images:
+                    return [result, *images]
             return result
 
         if action == "create":
@@ -243,9 +392,33 @@ def register_tickets_tools(mcp) -> None:  # noqa: C901
             try:
                 resp = await api_get(f"tickets/{ticket_id}/conversations")
                 resp.raise_for_status()
-                return resp.json()
+                result = resp.json()
             except Exception as e:
                 return handle_error(e, "list conversations")
+
+            if include_image_content:
+                refs: List[Dict[str, Any]] = []
+                convs = result.get("conversations") if isinstance(result, dict) else None
+                # The endpoint occasionally returns a bare list on some tenants;
+                # handle both shapes defensively.
+                iterable = convs if isinstance(convs, list) else (result if isinstance(result, list) else [])
+                for conv in iterable:
+                    if not isinstance(conv, dict):
+                        continue
+                    origin = f"conversation:{conv.get('id')}"
+                    for r in _collect_image_refs(conv):
+                        refs.append({**r, "origin": origin})
+                images, manifest, skipped = await _gather_images(refs)
+                if not isinstance(result, dict):
+                    result = {"conversations": result}
+                result["image_content"] = {
+                    "fetched": manifest,
+                    "skipped": skipped,
+                    "note": "Image bytes attached as separate image content blocks in this response.",
+                }
+                if images:
+                    return [result, *images]
+            return result
 
         if action == "reply":
             if not ticket_id or not body:
@@ -534,7 +707,8 @@ def register_tickets_tools(mcp) -> None:  # noqa: C901
         page: int = 1,
         per_page: int = 30,
         workspace_id: Optional[int] = None,
-    ) -> Dict[str, Any]:
+        include_image_content: bool = False,
+    ) -> Any:
         """Read Freshservice tickets and their sub-entities.
 
         Actions:
@@ -571,6 +745,16 @@ def register_tickets_tools(mcp) -> None:  # noqa: C901
             Use 'agent_id' (not 'responder_id'). Logical ops: AND, OR.
             Relational: :>, :<. Null: field:null.
             Example: "agent_id:120002355359 AND status:2"
+          - include_image_content (default False): only honored by ``get``
+            and ``list_conversations``. When True, downloads image
+            attachments and inline-pasted screenshots from the ticket
+            description (``get``) or each conversation body
+            (``list_conversations``) and returns them alongside the JSON as
+            MCP image content blocks. A ``image_content`` field on the JSON
+            lists what was fetched and what was skipped (with reasons).
+            Off by default because base64-encoded images bloat the response
+            and slow the model down — opt in only when the screenshots
+            matter. Caps: 5 MB / image, 20 MB total, 20 images per call.
         """
         action = normalize_action(action, _READ_TICKET)
         if not action:
@@ -594,6 +778,7 @@ def register_tickets_tools(mcp) -> None:  # noqa: C901
             time_entry_id=time_entry_id, approval_id=approval_id,
             body=None, title=None, time_spent=None, approver_id=None,
             payload=None,
+            include_image_content=include_image_content,
         )
 
     @mcp.tool()

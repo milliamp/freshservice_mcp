@@ -155,6 +155,29 @@ async def _fetch_json(path: str) -> Any:
     return resp.json()
 
 
+async def download_bytes(
+    url: str,
+    max_bytes: Optional[int] = None,
+) -> Tuple[bytes, str]:
+    """Download ``url`` and return ``(content_bytes, content_type)``.
+
+    Follows redirects (Freshservice attachment URLs redirect to a signed CDN).
+    Sends Basic-auth headers so inline-image URLs on the Freshservice domain
+    resolve; the CDN redirect target ignores them. Raises on non-2xx or if
+    ``max_bytes`` is provided and the payload exceeds it.
+    """
+    async with httpx.AsyncClient(follow_redirects=True) as client:
+        resp = await client.get(url, headers=get_auth_headers_readonly())
+        resp.raise_for_status()
+        data = resp.content
+        if max_bytes is not None and len(data) > max_bytes:
+            raise ValueError(
+                f"Payload {len(data)} bytes exceeds max {max_bytes} for {url}"
+            )
+        content_type = resp.headers.get("content-type", "application/octet-stream").split(";")[0].strip()
+        return data, content_type
+
+
 async def gather_enrichments(jobs: Dict[str, str]) -> Dict[str, Any]:
     """Run parallel sub-fetches; merge into a dict.
 
