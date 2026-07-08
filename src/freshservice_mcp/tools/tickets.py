@@ -203,6 +203,8 @@ def register_tickets_tools(mcp) -> None:  # noqa: C901
         "add_time_entry", "update_time_entry", "delete_time_entry",
         # approvals
         "add_approval", "approve", "reject", "remind",
+        # requested items (Service Requests only)
+        "add_requested_item",
     }
 
     async def _ticket_handler(  # noqa: C901
@@ -694,6 +696,23 @@ def register_tickets_tools(mcp) -> None:  # noqa: C901
                 except Exception as e:
                     return handle_error(e, f"{action} ticket approval")
 
+        # ── requested items (Service Requests only) ────────────────────
+        if action == "add_requested_item":
+            if not ticket_id:
+                return {"error": "ticket_id required for add_requested_item"}
+            item_id = pl.get("item_id")
+            if not item_id:
+                return {"error": "payload.item_id required for add_requested_item"}
+            data: Dict[str, Any] = {"item_id": item_id}
+            if "custom_fields" in pl:
+                data["custom_fields"] = pl["custom_fields"]
+            try:
+                resp = await api_post(f"tickets/{ticket_id}/requested_items", json=data)
+                resp.raise_for_status()
+                return resp.json()
+            except Exception as e:
+                return handle_error(e, "add requested item")
+
         return {"error": "unreachable"}
 
     @mcp.tool()
@@ -814,6 +833,7 @@ def register_tickets_tools(mcp) -> None:  # noqa: C901
           Task: add_task, update_task, delete_task
           Time entry: add_time_entry, update_time_entry, delete_time_entry
           Approval: add_approval, approve, reject, remind
+          Requested item (Service Requests only): add_requested_item
 
         Required per action:
           create: subject, description, (email OR requester_id)
@@ -826,6 +846,7 @@ def register_tickets_tools(mcp) -> None:  # noqa: C901
           update_time_entry / delete_time_entry: ticket_id, time_entry_id
           add_approval: ticket_id, approver_id
           approve / reject / remind: ticket_id, approval_id
+          add_requested_item: ticket_id, payload.item_id
 
         Optional fields:
           - priority: 1=Low,2=Medium,3=High,4=Urgent (ticket/task)
@@ -849,6 +870,10 @@ def register_tickets_tools(mcp) -> None:  # noqa: C901
           - te_agent_id (add_time_entry — REQUIRED in payload)
           - executed_at, task_id, billable, timer_running (time entries)
           - approval_type, email_content (add_approval)
+          - item_id (add_requested_item — REQUIRED in payload): catalog
+              item id to attach to the existing Service Request
+          - custom_fields (add_requested_item): dict of catalog-item
+              custom fields keyed by their API names
         """
         action = normalize_action(action, _WRITE_TICKET)
         err = reject_unless_in(action, _WRITE_TICKET, "manage_ticket", "read_ticket")
@@ -869,12 +894,11 @@ def register_tickets_tools(mcp) -> None:  # noqa: C901
     # ------------------------------------------------------------------ #
     #  service_catalog — read/manage split (sibling to tickets)           #
     # ------------------------------------------------------------------ #
-    _READ_SERVICE_CATALOG = {"list_items", "get_requested_items"}
+    _READ_SERVICE_CATALOG = {"list_items"}
     _WRITE_SERVICE_CATALOG = {"place_request"}
 
     async def _service_catalog_handler(
         action: str,
-        ticket_id: Optional[int],
         display_id: Optional[int],
         email: Optional[str],
         requested_for: Optional[str],
@@ -901,20 +925,6 @@ def register_tickets_tools(mcp) -> None:  # noqa: C901
             except Exception as e:
                 return handle_error(e, "list service items")
 
-        if action == "get_requested_items":
-            if not ticket_id:
-                return {"error": "ticket_id required"}
-            try:
-                ticket_resp = await api_get(f"tickets/{ticket_id}")
-                ticket_resp.raise_for_status()
-                if ticket_resp.json().get("ticket", {}).get("type") != "Service Request":
-                    return {"error": "Requested items can only be fetched for service requests"}
-                resp = await api_get(f"tickets/{ticket_id}/requested_items")
-                resp.raise_for_status()
-                return resp.json()
-            except Exception as e:
-                return handle_error(e, "get requested items")
-
         if action == "place_request":
             if not display_id or not email:
                 return {"error": "display_id and email required for place_request"}
@@ -933,23 +943,24 @@ def register_tickets_tools(mcp) -> None:  # noqa: C901
     @mcp.tool()
     async def read_service_catalog(
         action: str,
-        ticket_id: Optional[int] = None,
         page: int = 1,
         per_page: int = 30,
     ) -> Dict[str, Any]:
         """Read Freshservice service catalog.
 
-        Actions: list_items, get_requested_items
-        Required per action:
-          get_requested_items: ticket_id
-        Optional: page, per_page (list_items).
+        Actions: list_items
+        Optional: page, per_page.
+
+        Note: to fetch the requested items on an existing Service Request,
+        use ``read_ticket`` with ``action='get'`` — it embeds the ticket's
+        ``requested_items`` for SR-type tickets.
         """
         action = normalize_action(action, _READ_SERVICE_CATALOG)
         err = reject_unless_in(action, _READ_SERVICE_CATALOG, "read_service_catalog", "manage_service_catalog")
         if err:
             return err
         return await _service_catalog_handler(
-            action, ticket_id, display_id=None, email=None, requested_for=None,
+            action, display_id=None, email=None, requested_for=None,
             quantity=1, page=page, per_page=per_page,
         )
 
@@ -967,12 +978,15 @@ def register_tickets_tools(mcp) -> None:  # noqa: C901
         Required per action:
           place_request: display_id, email
         Optional: requested_for (target user email), quantity (default 1).
+
+        Note: to add a catalog item to an *existing* Service Request, use
+        ``manage_ticket`` with ``action='add_requested_item'``.
         """
         action = normalize_action(action, _WRITE_SERVICE_CATALOG)
         err = reject_unless_in(action, _WRITE_SERVICE_CATALOG, "manage_service_catalog", "read_service_catalog")
         if err:
             return err
         return await _service_catalog_handler(
-            action, ticket_id=None, display_id=display_id, email=email,
+            action, display_id=display_id, email=email,
             requested_for=requested_for, quantity=quantity, page=1, per_page=30,
         )
