@@ -1,13 +1,14 @@
 """Freshservice MCP — Shared HTTP client utilities."""
+import asyncio
 import base64
 import mimetypes
 import os
 import re
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import httpx
 
-from .config import FRESHSERVICE_DOMAIN, FRESHSERVICE_APIKEY
+from .config import FRESHSERVICE_DOMAIN, FRESHSERVICE_APIKEY, logger
 
 
 def _auth_header() -> str:
@@ -185,7 +186,6 @@ async def gather_enrichments(jobs: Dict[str, str]) -> Dict[str, Any]:
     at ``result[key]``; failures land at ``result["_" + key + "_warning"]``
     so a partial enrichment failure never kills the parent response.
     """
-    import asyncio
     if not jobs:
         return {}
     keys = list(jobs.keys())
@@ -204,3 +204,79 @@ async def gather_enrichments(jobs: Dict[str, str]) -> Dict[str, Any]:
             else:
                 enriched[key] = res
     return enriched
+
+
+_RETRY_STATUSES = (429, 503)
+_MAX_RETRY_SLEEP = 10.0
+
+
+async def fetch_json_bounded(
+    paths: Sequence[str],
+    concurrency: int = 5,
+    max_retries: int = 3,
+    timeout: float = 30.0,
+) -> List[Any]:
+    """Fetch many API paths with at most *concurrency* requests in flight.
+
+    Order-preserving and exception-tolerant: failures are RETURNED in place
+    rather than raised, matching ``asyncio.gather(return_exceptions=True)``, so
+    callers can zip results back onto their own keys and report per-item errors.
+
+    Complements :func:`gather_enrichments`, which takes a fixed dict of jobs
+    and runs them all at once. This one is for fan-outs sized by the data (one
+    request per ticket), where a concurrency bound and rate-limit handling
+    matter. It reuses a single pooled client for the whole batch instead of a
+    fresh TLS handshake per request.
+
+    Rate limiting is per-minute and account-wide, so a 429 means the whole
+    batch should pause, not just the task that saw it. The first 429 sets a
+    deadline every task waits on, which turns N independent lockstep retries
+    into one coordinated back-off. A ``Retry-After`` longer than
+    ``_MAX_RETRY_SLEEP`` is NOT honoured — stalling an interactive tool call
+    for a minute is worse than reporting the 429 and letting the caller retry.
+    """
+    if not paths:
+        return []
+
+    sem = asyncio.Semaphore(max(1, concurrency))
+    loop = asyncio.get_running_loop()
+    gate = {"until": 0.0}  # monotonic deadline shared across the batch
+
+    async def await_gate() -> None:
+        while True:
+            remaining = gate["until"] - loop.time()
+            if remaining <= 0:
+                return
+            await asyncio.sleep(min(remaining, _MAX_RETRY_SLEEP))
+
+    async def one(client: httpx.AsyncClient, path: str) -> Any:
+        resp = None
+        for attempt in range(max_retries + 1):
+            await await_gate()
+            async with sem:
+                resp = await client.get(api_url(path))
+            if resp.status_code not in _RETRY_STATUSES or attempt == max_retries:
+                break
+            requested = float(resp.headers.get("Retry-After", 1) or 1)
+            if requested > _MAX_RETRY_SLEEP:
+                logger.info(
+                    "fetch_json_bounded: %s on %s asks for %.0fs — reporting instead",
+                    resp.status_code, path, requested,
+                )
+                break
+            gate["until"] = max(gate["until"], loop.time() + requested)
+            logger.info(
+                "fetch_json_bounded: %s on %s, batch paused %.1fs (attempt %d/%d)",
+                resp.status_code, path, requested, attempt + 1, max_retries,
+            )
+        resp.raise_for_status()
+        return resp.json()
+
+    limits = httpx.Limits(max_connections=max(1, concurrency),
+                          max_keepalive_connections=max(1, concurrency))
+    async with httpx.AsyncClient(
+        headers=get_auth_headers_readonly(), limits=limits, timeout=timeout
+    ) as client:
+        return await asyncio.gather(
+            *[one(client, p) for p in paths], return_exceptions=True
+        )
