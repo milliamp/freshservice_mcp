@@ -11,17 +11,20 @@ Tools:
       — service-catalog browsing + service-request placement (sibling of
         tickets; not folded into manage_ticket).
 """
+import json
 import re
 import urllib.parse
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Sequence, Set, Tuple, Union
 
 from mcp.server.fastmcp import Image
 
+from ..cache import REQUESTED_ITEMS_KEY, read_cache, write_cache
 from ..config import (
     TicketPriority,
     TicketSource,
     TicketStatus,
 )
+from ..discovery import fetch_service_items, resolve_item_selectors
 from ..http_client import (
     api_delete,
     api_get,
@@ -30,6 +33,7 @@ from ..http_client import (
     api_put,
     build_attachment_parts,
     download_bytes,
+    fetch_json_bounded,
     gather_enrichments,
     handle_error,
     parse_link_header,
@@ -174,6 +178,504 @@ def _validate_pagination(page: int, per_page: int) -> Optional[Dict[str, Any]]:
     return None
 
 
+# ── requested-item scan ────────────────────────────────────────────────────
+# Freshservice has no server-side filter for requested catalog items, so
+# "which tickets request item 34?" has to be answered by scanning: run a
+# server-side prefilter, then GET /tickets/{id}/requested_items per candidate.
+#
+# Only these ticket types can carry requested items, so the fan-out skips
+# everything else. /tickets/filter cannot narrow by type server-side (verified
+# live: `type`, `ticket_type` and `type_id` all 400 with "Unexpected/invalid
+# field"), but each ticket in the filter response does carry `type`, so the
+# gate is free client-side — it removed ~43% of the fan-out on a real tenant.
+_REQUESTED_ITEM_TYPES = {"Service Request"}
+
+_FILTER_PAGE_SIZE = 30              # tickets/filter ignores per_page
+_SCAN_MAX_DEFAULT = 200
+_SCAN_MAX_CEILING = 500
+_SCAN_CONCURRENCY_DEFAULT = 5
+_SCAN_CONCURRENCY_MAX = 10
+_ITEM_CACHE_MAX_ENTRIES = 2000
+_ITEMS_PER_TICKET_PAGE = 30         # a full page hints the sub-endpoint paginated
+
+# Trimmed projections. One requested item's custom_fields blob runs to several
+# KB; handing 30+ of them back raw would swamp the model's context window.
+_ITEM_SUMMARY_FIELDS = ("id", "service_item_id", "service_item_name",
+                        "quantity", "stage", "is_parent")
+_TICKET_SUMMARY_FIELDS = ("id", "subject", "type", "status", "status_name",
+                          "priority", "requester_id", "requested_for_id",
+                          "group_id", "department_id", "created_at",
+                          "updated_at", "due_by")
+
+
+def _summarise_errors(errors: Dict[Any, str], sample: int = 3) -> List[Dict[str, Any]]:
+    """Group per-ticket fetch failures by message so a rate-limit storm reads
+    as one line rather than N near-identical paragraphs."""
+    groups: Dict[str, List[Any]] = {}
+    for tid, msg in errors.items():
+        # Collapse the URL out of the message so identical failures group.
+        key = re.sub(r"https?://\S+", "<url>", str(msg)).split("\n")[0].strip()
+        groups.setdefault(key, []).append(tid)
+    out = []
+    for msg, tids in sorted(groups.items(), key=lambda kv: -len(kv[1])):
+        entry: Dict[str, Any] = {"error": msg, "ticket_count": len(tids),
+                                 "ticket_ids": tids[:sample]}
+        if len(tids) > sample:
+            entry["ticket_ids_truncated"] = True
+        out.append(entry)
+    return out
+
+
+def _trim(src: Dict[str, Any], fields: Sequence[str]) -> Dict[str, Any]:
+    """Project *src* down to *fields* (missing keys are simply absent)."""
+    return {k: src[k] for k in fields if k in src}
+
+
+def _trim_item(item: Dict[str, Any], include_custom_fields: bool = False) -> Dict[str, Any]:
+    out = _trim(item, _ITEM_SUMMARY_FIELDS)
+    if include_custom_fields and "custom_fields" in item:
+        out["custom_fields"] = item["custom_fields"]
+    return out
+
+
+def _coerce_selectors(raw: Any) -> Optional[List[Union[int, str]]]:
+    """Normalise an ``items``-style argument into a list of ids / name terms.
+
+    Tolerates the shapes MCP clients actually send: a real list, a JSON string
+    (``"[34, 39]"``), a comma-separated string (``"34,39"`` or
+    ``"Desk Move, Headphones"``), or a bare int/str. Returns None when nothing
+    was supplied, so callers can distinguish "absent" from "empty".
+    """
+    if raw is None:
+        return None
+    if isinstance(raw, bool):
+        return None
+    if isinstance(raw, (int, float)):
+        return [int(raw)]
+    if isinstance(raw, str):
+        s = raw.strip()
+        if not s:
+            return None
+        if s.startswith("["):
+            try:
+                parsed = json.loads(s)
+                if isinstance(parsed, list):
+                    return [x for x in parsed if x is not None and x != ""]
+            except (json.JSONDecodeError, TypeError):
+                pass
+        # Comma-separated fallback. Safe only while no catalog item name
+        # contains a comma; payload.item_names is the escape hatch if one does.
+        return [p.strip() for p in s.split(",") if p.strip()]
+    if isinstance(raw, (list, tuple, set)):
+        return [x for x in raw if x is not None and x != ""]
+    return [raw]
+
+
+def _selector_matches(sel: Dict[str, Any], item: Dict[str, Any]) -> bool:
+    """True if *item* satisfies one resolved selector (display_id OR name term)."""
+    sid = item.get("service_item_id")
+    if sid is not None:
+        try:
+            if int(sid) in sel["display_ids"]:
+                return True
+        except (TypeError, ValueError):
+            pass
+    name = (item.get("service_item_name") or "").lower()
+    return any(term in name for term in sel["terms"])
+
+
+def _rollup_items(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Group items by service_item_id, summing quantity across line items.
+
+    One Service Request can carry the same catalog item on several lines, so
+    the per-item total is what "who wants 2+ monitors?" actually means.
+    """
+    grouped: Dict[Any, Dict[str, Any]] = {}
+    for item in items:
+        sid = item.get("service_item_id")
+        g = grouped.setdefault(sid, {
+            "service_item_id": sid,
+            "service_item_name": item.get("service_item_name"),
+            "quantity": 0,
+            "line_items": 0,
+            "stages": [],
+        })
+        try:
+            g["quantity"] += int(item.get("quantity") or 1)
+        except (TypeError, ValueError):
+            g["quantity"] += 1
+        g["line_items"] += 1
+        stage = item.get("stage")
+        if stage is not None and stage not in g["stages"]:
+            g["stages"].append(stage)
+    return list(grouped.values())
+
+
+async def _filter_tickets_all_pages(
+    query: str,
+    workspace_id: Optional[int],
+    max_tickets: int,
+) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+    """Walk ``tickets/filter`` pages, stopping once *max_tickets* is reached.
+
+    Returns ``(tickets, meta)``. ``meta`` carries the endpoint's own ``total``,
+    pages fetched, truncated/truncation_reason, and — if the walk died part-way
+    — ``error``, because a partial answer with an honest error beats none.
+    """
+    encoded = urllib.parse.quote(f'"{query}"')
+    suffix = f"&workspace_id={workspace_id}" if workspace_id is not None else ""
+    tickets: List[Dict[str, Any]] = []
+    seen: Set[Any] = set()
+    meta: Dict[str, Any] = {
+        "total": None, "pages": 0, "truncated": False, "truncation_reason": None,
+    }
+    page = 1
+    while True:
+        try:
+            resp = await api_get(f"tickets/filter?query={encoded}&page={page}{suffix}")
+            resp.raise_for_status()
+            body = resp.json()
+        except Exception as e:
+            meta["error"] = f"Failed to filter tickets on page {page}: {e}"
+            meta["truncated"] = True
+            meta["truncation_reason"] = "error"
+            break
+
+        meta["pages"] = page
+        if meta["total"] is None:
+            meta["total"] = body.get("total")
+
+        batch = body.get("tickets") or []
+        for t in batch:
+            tid = t.get("id")
+            if tid in seen:  # records shift between page fetches on a busy tenant
+                continue
+            seen.add(tid)
+            tickets.append(t)
+
+        if len(batch) < _FILTER_PAGE_SIZE:
+            break  # short page == last page
+        if isinstance(meta["total"], int) and len(tickets) >= meta["total"]:
+            break  # got them all; don't spend a request proving the next page is empty
+        if len(tickets) >= max_tickets:
+            meta["truncated"] = True
+            meta["truncation_reason"] = "max_scan"
+            break
+        page += 1
+
+    if len(tickets) > max_tickets:
+        tickets = tickets[:max_tickets]
+        meta["truncated"] = True
+        meta["truncation_reason"] = meta["truncation_reason"] or "max_scan"
+
+    # The endpoint's own count is the most reliable truncation signal.
+    total = meta.get("total")
+    if isinstance(total, int) and len(tickets) < total:
+        meta["truncated"] = True
+        meta["truncation_reason"] = meta["truncation_reason"] or "max_scan"
+
+    return tickets, meta
+
+
+async def _requested_items_for(
+    tickets: List[Dict[str, Any]],
+    concurrency: int,
+    include_custom_fields: bool,
+) -> Tuple[Dict[Any, Dict[str, Any]], Dict[Any, str], Dict[str, int]]:
+    """Fetch trimmed requested items per ticket id, with a self-invalidating cache.
+
+    Returns ``(by_ticket, errors, stats)`` where ``by_ticket[tid]`` is
+    ``{"items": [...], "maybe_truncated": bool}``.
+
+    Cache entries are keyed ``f"{ticket_id}:{updated_at}"`` inside a single
+    blob, so editing a ticket invalidates just its own entry without waiting
+    for the TTL, and a follow-up question about a different catalog item costs
+    no API calls at all. Custom fields are never cached — they are the bulky
+    part — so asking for them forces a live fetch.
+    """
+    blob: Dict[str, Any] = read_cache(REQUESTED_ITEMS_KEY) or {}
+    by_ticket: Dict[Any, Dict[str, Any]] = {}
+    errors: Dict[Any, str] = {}
+    stats = {"from_cache": 0, "fetched": 0}
+
+    misses: List[Dict[str, Any]] = []
+    for t in tickets:
+        hit = None if include_custom_fields else blob.get(f"{t.get('id')}:{t.get('updated_at')}")
+        if hit is not None:
+            by_ticket[t.get("id")] = hit
+            stats["from_cache"] += 1
+        else:
+            misses.append(t)
+
+    if misses:
+        results = await fetch_json_bounded(
+            [f"tickets/{t.get('id')}/requested_items" for t in misses],
+            concurrency=concurrency,
+        )
+        for t, res in zip(misses, results):
+            tid = t.get("id")
+            if isinstance(res, BaseException):
+                errors[tid] = str(res)
+                continue
+            raw = res.get("requested_items", []) if isinstance(res, dict) else res
+            if not isinstance(raw, list):
+                raw = []
+            entry = {
+                "items": [_trim_item(i, include_custom_fields) for i in raw],
+                # A full page suggests the sub-endpoint paginated. Flagging it
+                # is free; chasing it would cost another request per ticket.
+                "maybe_truncated": len(raw) >= _ITEMS_PER_TICKET_PAGE,
+            }
+            by_ticket[tid] = entry
+            stats["fetched"] += 1
+            if not include_custom_fields:
+                blob[f"{tid}:{t.get('updated_at')}"] = entry
+
+        if not include_custom_fields:
+            if len(blob) > _ITEM_CACHE_MAX_ENTRIES:
+                # dicts preserve insertion order, so the tail is the newest.
+                blob = dict(list(blob.items())[-_ITEM_CACHE_MAX_ENTRIES:])
+            write_cache(REQUESTED_ITEMS_KEY, blob)
+
+    return by_ticket, errors, stats
+
+
+async def _scan_requested_items(
+    *,
+    query: str,
+    workspace_id: Optional[int],
+    selectors: Optional[List[Union[int, str]]],
+    match_items: str,
+    min_distinct_items: Optional[int],
+    max_distinct_items: Optional[int],
+    max_scan: int,
+    opts: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Find tickets by their requested catalog items.
+
+    Prefilter with *query*, keep the ticket types that can hold requested
+    items, fan out for each one's items, then apply the item predicates.
+    """
+    notes: List[str] = []
+    warnings: List[str] = []
+
+    mode = (match_items or "any").lower().strip()
+    if mode not in ("any", "all"):
+        return {"error": f"match_items must be 'any' or 'all', got {match_items!r}"}
+
+    scan_max = max_scan if isinstance(max_scan, int) and max_scan > 0 else _SCAN_MAX_DEFAULT
+    if scan_max > _SCAN_MAX_CEILING:
+        notes.append(f"max_scan clamped from {scan_max} to {_SCAN_MAX_CEILING}.")
+        scan_max = _SCAN_MAX_CEILING
+
+    try:
+        concurrency = int(opts.get("concurrency", _SCAN_CONCURRENCY_DEFAULT))
+    except (TypeError, ValueError):
+        concurrency = _SCAN_CONCURRENCY_DEFAULT
+    if not 1 <= concurrency <= _SCAN_CONCURRENCY_MAX:
+        notes.append(f"concurrency clamped into 1..{_SCAN_CONCURRENCY_MAX}.")
+        concurrency = min(max(1, concurrency), _SCAN_CONCURRENCY_MAX)
+
+    include_custom_fields = bool(opts.get("include_custom_fields", False))
+    include_non_srs = bool(opts.get("include_non_service_requests", False))
+
+    # ── 1. resolve item selectors ──────────────────────────────────────
+    groups = [
+        (selectors or [], None),
+        (_coerce_selectors(opts.get("item_ids")) or [], "id"),
+        (_coerce_selectors(opts.get("item_names")) or [], "name"),
+    ]
+    resolved: List[Dict[str, Any]] = []
+    catalog_source = None
+    if any(sels for sels, _ in groups):
+        catalog = await fetch_service_items()
+        catalog_items = catalog.get("items") or []
+        catalog_source = catalog.get("source")
+        if not catalog_items:
+            notes.append(
+                "Catalog index unavailable, so name selectors degrade to matching "
+                "service_item_name on each ticket's items (unverified): "
+                f"{catalog.get('error', 'empty index')}"
+            )
+        # Only the per-selector entries matter downstream: each carries its own
+        # display_ids + terms, which is what match_items="all" tests against.
+        merged: Dict[str, List[Any]] = {"resolved": [], "unmatched": [], "notes": []}
+        for sels, force in groups:
+            if not sels:
+                continue
+            r = resolve_item_selectors(catalog_items, sels, force=force)
+            for key in merged:
+                merged[key].extend(r[key])
+
+        if merged["unmatched"]:
+            # Fail before spending a request per ticket: a typo is cheap to fix
+            # and a silently dropped selector is very easy to miss in a list.
+            return {
+                "success": False,
+                "error": "Some item selectors matched no catalog item — nothing was "
+                         "scanned. Fix or remove them and re-run.",
+                "unmatched": merged["unmatched"],
+                "hint": "read_service_catalog(action='list_item_index') lists every "
+                        "item's display_id and name.",
+            }
+        resolved = merged["resolved"]
+        notes.extend(merged["notes"])
+
+    # ── 2. server-side prefilter ───────────────────────────────────────
+    tickets, pmeta = await _filter_tickets_all_pages(query, workspace_id, scan_max)
+    if pmeta.get("error") and not tickets:
+        return {"success": False, "error": pmeta["error"]}
+
+    # ── 3. narrow to types that can hold requested items ───────────────
+    if include_non_srs:
+        candidates, scanned_types = tickets, "all"
+    elif tickets and not any(t.get("type") is not None for t in tickets):
+        # The response stopped carrying `type`. Returning zero matches here
+        # would read as "nothing requests that item", which is far worse than
+        # scanning everything and saying so.
+        candidates, scanned_types = tickets, "all"
+        notes.append(
+            "No ticket in the filter response carried a `type` field, so the "
+            "Service-Request gate was disabled and every candidate was scanned."
+        )
+    else:
+        candidates = [t for t in tickets if t.get("type") in _REQUESTED_ITEM_TYPES]
+        scanned_types = sorted(_REQUESTED_ITEM_TYPES)
+    skipped_by_type = len(tickets) - len(candidates)
+
+    # ── 4. fan out for each candidate's requested items ────────────────
+    by_ticket, fetch_errors, stats = await _requested_items_for(
+        candidates, concurrency, include_custom_fields
+    )
+
+    # ── 5. apply the predicates ────────────────────────────────────────
+    matches: List[Dict[str, Any]] = []
+    histogram: Dict[Any, Dict[str, Any]] = {}
+    partial_items = 0
+
+    for t in candidates:
+        entry = by_ticket.get(t.get("id"))
+        if entry is None:
+            continue  # fetch failed — surfaced in scan.errors
+        items = entry.get("items") or []
+        distinct = {i.get("service_item_id") for i in items
+                    if i.get("service_item_id") is not None}
+
+        if resolved:
+            per_selector = [[i for i in items if _selector_matches(s, i)] for s in resolved]
+            hits = sum(1 for group in per_selector if group)
+            if hits == 0 or (mode == "all" and hits < len(resolved)):
+                continue
+            # Dedupe: one item can satisfy more than one selector, and
+            # double-counting it would inflate the quantity rollup.
+            seen_items: Set[Any] = set()
+            matched_items = []
+            for group in per_selector:
+                for i in group:
+                    marker = i.get("id", id(i))
+                    if marker in seen_items:
+                        continue
+                    seen_items.add(marker)
+                    matched_items.append(i)
+        else:
+            matched_items = items
+
+        if min_distinct_items is not None and len(distinct) < min_distinct_items:
+            continue
+        if max_distinct_items is not None and len(distinct) > max_distinct_items:
+            continue
+
+        rollup = _rollup_items(matched_items)
+        row = _trim(t, _TICKET_SUMMARY_FIELDS)
+        row["distinct_item_count"] = len(distinct)
+        row["line_item_count"] = len(items)
+        row["matched_items"] = rollup
+        row["all_item_ids"] = sorted(d for d in distinct if isinstance(d, int))
+        if entry.get("maybe_truncated"):
+            row["items_may_be_truncated"] = True
+            partial_items += 1
+        matches.append(row)
+
+        for r in rollup:
+            h = histogram.setdefault(r["service_item_id"], {
+                "service_item_id": r["service_item_id"],
+                "name": r["service_item_name"],
+                "tickets": 0,
+                "quantity": 0,
+            })
+            h["tickets"] += 1
+            h["quantity"] += r["quantity"]
+
+    # ── 6. report honestly on anything we capped or dropped ────────────
+    if pmeta.get("truncated"):
+        warnings.append(
+            f"TRUNCATED: {pmeta.get('total')} tickets matched `{query}` but only "
+            f"{len(tickets)} were scanned (max_scan={scan_max}). Narrow the query "
+            f"or raise max_scan (ceiling {_SCAN_MAX_CEILING})."
+        )
+    if pmeta.get("error"):
+        warnings.append(f"PARTIAL: {pmeta['error']}")
+    if fetch_errors:
+        msg = (f"PARTIAL: requested items could not be fetched for {len(fetch_errors)} "
+               "ticket(s), which are therefore ABSENT from the results — this list is "
+               "incomplete. See scan.errors.")
+        # Match the status phrase, not a bare "429": the message embeds the
+        # request URL, so a ticket id like 11429 would be a false positive.
+        rate_limited = sum(1 for m in fetch_errors.values() if "429 Too Many Requests" in str(m))
+        if rate_limited:
+            msg += (f" {rate_limited} of them were rate-limited (429); Freshservice caps "
+                    "requests per minute, so narrow `query`, lower payload.concurrency, "
+                    "or wait a minute and re-run — tickets already fetched are cached.")
+        warnings.append(msg)
+    if partial_items:
+        warnings.append(
+            f"PARTIAL: {partial_items} ticket(s) returned a full page of requested "
+            "items, so their item list may be incomplete (items_may_be_truncated)."
+        )
+
+    result: Dict[str, Any] = {
+        "success": True,
+        "criteria": {
+            "query": query,
+            "workspace_id": workspace_id,
+            "match_items": mode if resolved else None,
+            "resolved": [_trim(r, ("selector", "display_ids", "names", "matched_by"))
+                         for r in resolved],
+            "min_distinct_items": min_distinct_items,
+            "max_distinct_items": max_distinct_items,
+            "catalog_source": catalog_source,
+            "scanned_types": scanned_types,
+        },
+        "matches": matches,
+        "summary": {
+            "matched_tickets": len(matches),
+            "item_histogram": sorted(histogram.values(),
+                                     key=lambda h: (-h["tickets"], -h["quantity"])),
+        },
+        "scan": {
+            "prefilter_total": pmeta.get("total"),
+            "prefilter_fetched": len(tickets),
+            "prefilter_pages": pmeta.get("pages"),
+            "skipped_by_type": skipped_by_type,
+            "tickets_scanned": len(candidates),
+            "items_from_cache": stats["from_cache"],
+            "items_fetched": stats["fetched"],
+            "truncated": bool(pmeta.get("truncated")),
+            "truncation_reason": pmeta.get("truncation_reason"),
+            "max_scan": scan_max,
+            "concurrency": concurrency,
+            "errors": _summarise_errors(fetch_errors),
+            "notes": notes,
+            "note": "Freshservice cannot filter by requested item server-side, so "
+                    "these results come from a client-side scan of the tickets "
+                    "matching `query`.",
+        },
+    }
+    if warnings:
+        result["warning"] = " ".join(warnings)
+    return result
+
+
 def register_tickets_tools(mcp) -> None:  # noqa: C901
     """Register ticket-related tools on *mcp*."""
 
@@ -236,6 +738,11 @@ def register_tickets_tools(mcp) -> None:  # noqa: C901
         payload: Optional[Dict[str, Any]],
         # read-only extras
         include_image_content: bool = False,
+        items: Any = None,
+        match_items: str = "any",
+        min_distinct_items: Optional[int] = None,
+        max_distinct_items: Optional[int] = None,
+        max_scan: int = _SCAN_MAX_DEFAULT,
     ) -> Any:
         pl: Dict[str, Any] = coerce_payload(payload)
 
@@ -271,6 +778,24 @@ def register_tickets_tools(mcp) -> None:  # noqa: C901
         if action == "filter":
             if not query:
                 return {"error": "query is required for filter action"}
+
+            selectors = _coerce_selectors(items)
+            if (selectors is not None or min_distinct_items is not None
+                    or max_distinct_items is not None
+                    or pl.get("item_ids") or pl.get("item_names")):
+                # Requested-item filtering: a client-side scan, not a passthrough.
+                return await _scan_requested_items(
+                    query=query,
+                    workspace_id=workspace_id,
+                    selectors=selectors,
+                    match_items=match_items,
+                    min_distinct_items=min_distinct_items,
+                    max_distinct_items=max_distinct_items,
+                    max_scan=max_scan,
+                    opts=pl,
+                )
+
+            # Plain passthrough: one request, Freshservice's own response body.
             encoded_query = urllib.parse.quote(f'"{query}"')
             url = f"tickets/filter?query={encoded_query}&page={page}"
             if workspace_id is not None:
@@ -727,6 +1252,12 @@ def register_tickets_tools(mcp) -> None:  # noqa: C901
         per_page: int = 30,
         workspace_id: Optional[int] = None,
         include_image_content: bool = False,
+        items: Optional[Union[List[Union[int, str]], str, int]] = None,
+        match_items: str = "any",
+        min_distinct_items: Optional[int] = None,
+        max_distinct_items: Optional[int] = None,
+        max_scan: int = _SCAN_MAX_DEFAULT,
+        payload: Optional[Dict[str, Any]] = None,
     ) -> Any:
         """Read Freshservice tickets and their sub-entities.
 
@@ -748,10 +1279,13 @@ def register_tickets_tools(mcp) -> None:  # noqa: C901
           get_time_entry: ticket_id, time_entry_id
           get_approval: ticket_id, approval_id
 
-        Optional: page, per_page (list/filter), workspace_id (filter).
+        Optional: page, per_page (list/filter), workspace_id (filter),
+          items / match_items / min_distinct_items / max_distinct_items /
+          max_scan / payload (filter, requested-item mode).
 
         Default action: if not provided, inferred from params —
-          ticket_id → get, query → filter, otherwise list.
+          ticket_id → get, items or a distinct-item bound → filter,
+          query → filter, otherwise list.
 
         Notes:
           - get auto-enriches with stats + requester (native ?include= on
@@ -764,6 +1298,43 @@ def register_tickets_tools(mcp) -> None:  # noqa: C901
             Use 'agent_id' (not 'responder_id'). Logical ops: AND, OR.
             Relational: :>, :<. Null: field:null.
             Example: "agent_id:120002355359 AND status:2"
+            Filterable fields do NOT include ticket type — narrow by status,
+            priority, impact, urgency, tag, due_by, fr_due_by, created_at,
+            agent_id, group_id, requester_id, department_id, category,
+            sub_category, item_category or cf_* only.
+          - filter by REQUESTED CATALOG ITEM — answers "which tickets request
+            item 34?" Pass any of items / min_distinct_items /
+            max_distinct_items alongside query and the response changes to
+            {criteria, matches, summary, scan}; without them, filter stays a
+            plain one-request passthrough of Freshservice's own body.
+              items: list of catalog display_ids and/or item-name substrings,
+                mixed freely — e.g. [34, 39, "Headphones"]. A display_id is
+                the SMALL number shown in the catalog, not the 75000xxxxxxx
+                internal id. Names are matched case-insensitively; a name
+                matching several items includes all of them. An unmatched
+                selector is a hard error (with suggestions) BEFORE any
+                scanning, so fix typos and re-run.
+              match_items: "any" (default, OR) or "all" (ticket must request
+                every listed item).
+              min_distinct_items / max_distinct_items: bound the number of
+                DISTINCT catalog items on the ticket — min_distinct_items=2
+                finds multi-item Service Requests.
+              Omit items and pass min_distinct_items=0 to report the items on
+                every scanned ticket without filtering by item at all.
+              summary.item_histogram totals tickets and quantity per item, so
+                "how many open tickets for each of these items?" needs one call.
+              max_scan (default 200, ceiling 500): cap on tickets whose items
+                are fetched.
+              payload: item_ids / item_names (force a selector to be read as
+                an id or a name), concurrency (default 5, max 10),
+                include_custom_fields (default False — item custom_fields are
+                very large), include_non_service_requests (default False).
+            COST: Freshservice cannot filter by requested item server-side, so
+            this runs your query, keeps the Service Requests (only they can
+            hold catalog items), then fetches requested_items once per
+            candidate. Make query as narrow as you can. Results are capped,
+            never silently — ALWAYS check the top-level "warning" and
+            scan.truncated before telling the user a list is complete.
           - include_image_content (default False): only honored by ``get``
             and ``list_conversations``. When True, downloads image
             attachments and inline-pasted screenshots from the ticket
@@ -778,9 +1349,12 @@ def register_tickets_tools(mcp) -> None:  # noqa: C901
         action = normalize_action(action, _READ_TICKET)
         if not action:
             # Smart default: infer from which params the caller supplied.
+            # Item params are checked before query, since a requested-item
+            # scan supplies both.
             if ticket_id:
                 action = "get"
-            elif query:
+            elif (items is not None or min_distinct_items is not None
+                    or max_distinct_items is not None or query):
                 action = "filter"
             else:
                 action = "list"
@@ -796,8 +1370,12 @@ def register_tickets_tools(mcp) -> None:  # noqa: C901
             conversation_id=None, task_id=task_id,
             time_entry_id=time_entry_id, approval_id=approval_id,
             body=None, title=None, time_spent=None, approver_id=None,
-            payload=None,
+            payload=payload,
             include_image_content=include_image_content,
+            items=items, match_items=match_items,
+            min_distinct_items=min_distinct_items,
+            max_distinct_items=max_distinct_items,
+            max_scan=max_scan,
         )
 
     @mcp.tool()
@@ -894,7 +1472,7 @@ def register_tickets_tools(mcp) -> None:  # noqa: C901
     # ------------------------------------------------------------------ #
     #  service_catalog — read/manage split (sibling to tickets)           #
     # ------------------------------------------------------------------ #
-    _READ_SERVICE_CATALOG = {"list_items"}
+    _READ_SERVICE_CATALOG = {"list_items", "list_item_index"}
     _WRITE_SERVICE_CATALOG = {"place_request"}
 
     async def _service_catalog_handler(
@@ -905,7 +1483,14 @@ def register_tickets_tools(mcp) -> None:  # noqa: C901
         quantity: int,
         page: int,
         per_page: int,
+        force_refresh: bool = False,
     ) -> Dict[str, Any]:
+        if action == "list_item_index":
+            result = await fetch_service_items(force_refresh=force_refresh)
+            if "items" not in result:
+                return result  # error dict from handle_error
+            return {"success": True, "total": len(result["items"]), **result}
+
         if action == "list_items":
             err = _validate_pagination(page, per_page)
             if err:
@@ -916,12 +1501,14 @@ def register_tickets_tools(mcp) -> None:  # noqa: C901
                 while True:
                     resp = await api_get("service_catalog/items", params={"page": current_page, "per_page": per_page})
                     resp.raise_for_status()
-                    all_items.append(resp.json())
+                    # Flatten the per-page envelope: appending resp.json()
+                    # handed callers a list of {"service_items": [...]} pages.
+                    all_items.extend(resp.json().get("service_items", []))
                     pagination_info = parse_link_header(resp.headers.get("Link", ""))
                     if not pagination_info.get("next"):
                         break
                     current_page = pagination_info["next"]
-                return {"success": True, "items": all_items}
+                return {"success": True, "total": len(all_items), "items": all_items}
             except Exception as e:
                 return handle_error(e, "list service items")
 
@@ -945,15 +1532,26 @@ def register_tickets_tools(mcp) -> None:  # noqa: C901
         action: str,
         page: int = 1,
         per_page: int = 30,
+        force_refresh: bool = False,
     ) -> Dict[str, Any]:
         """Read Freshservice service catalog.
 
-        Actions: list_items
-        Optional: page, per_page.
+        Actions:
+          list_item_index — compact {display_id, id, name, item_type, deleted}
+            for every catalog item, cached locally for an hour. Prefer this:
+            it is a few KB where list_items is ~100 KB of HTML descriptions
+            and field definitions. Use it to map an item name to the small
+            display_id that requested_items and place_request expect.
+          list_items — every catalog item in full, all pages, uncached.
 
-        Note: to fetch the requested items on an existing Service Request,
-        use ``read_ticket`` with ``action='get'`` — it embeds the ticket's
-        ``requested_items`` for SR-type tickets.
+        Optional: page, per_page (list_items), force_refresh (list_item_index).
+
+        Notes:
+          - To fetch the requested items on an existing Service Request, use
+            ``read_ticket`` with ``action='get'`` — it embeds the ticket's
+            ``requested_items`` for SR-type tickets.
+          - To find which tickets request a given item, use ``read_ticket``
+            with ``action='filter'`` and ``items=[...]``.
         """
         action = normalize_action(action, _READ_SERVICE_CATALOG)
         err = reject_unless_in(action, _READ_SERVICE_CATALOG, "read_service_catalog", "manage_service_catalog")
@@ -961,7 +1559,7 @@ def register_tickets_tools(mcp) -> None:  # noqa: C901
             return err
         return await _service_catalog_handler(
             action, display_id=None, email=None, requested_for=None,
-            quantity=1, page=page, per_page=per_page,
+            quantity=1, page=page, per_page=per_page, force_refresh=force_refresh,
         )
 
     @mcp.tool()
