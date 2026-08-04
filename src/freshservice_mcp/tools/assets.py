@@ -301,7 +301,10 @@ def register_assets_tools(mcp) -> None:
         if action == "create_type":
             if not name:
                 return {"error": "name is required for create_type"}
-            data: Dict[str, Any] = {"name": name, "visible": visible}
+            # Do NOT send 'visible'. It comes back on a read but the create
+            # endpoint rejects it outright ("Unexpected/invalid field in
+            # request"), so including it 400s every call.
+            data: Dict[str, Any] = {"name": name}
             if description:
                 data["description"] = description
             if parent_asset_type_id:
@@ -309,7 +312,17 @@ def register_assets_tools(mcp) -> None:
             try:
                 resp = await api_post("asset_types", json=data)
                 resp.raise_for_status()
-                return {"success": True, "asset_type": resp.json()}
+                result: Dict[str, Any] = {"success": True, "asset_type": resp.json()}
+                # Accepted-but-ignored rather than rejected: callers primed by
+                # the old signature still succeed, and the note tells them why
+                # their argument had no effect.
+                if visible is not None:
+                    result["warning"] = (
+                        "'visible' was ignored — Freshservice does not accept it when "
+                        "creating an asset type. Adjust visibility in the Freshservice "
+                        "admin UI instead."
+                    )
+                return result
             except Exception as e:
                 return handle_error(e, "create asset type")
 
@@ -387,7 +400,7 @@ def register_assets_tools(mcp) -> None:
             search_query=search_query, filter_query=filter_query,
             include=include, order_by=order_by, order_type=order_type,
             trashed=trashed, page=page, per_page=per_page,
-            parent_asset_type_id=None, visible=True,
+            parent_asset_type_id=None, visible=None,
         )
 
     @mcp.tool()
@@ -413,7 +426,7 @@ def register_assets_tools(mcp) -> None:
         asset_fields: Optional[Dict[str, Any]] = None,
         # create_type fields
         parent_asset_type_id: Optional[int] = None,
-        visible: Optional[bool] = True,
+        visible: Optional[bool] = None,
     ) -> Dict[str, Any]:
         """Write actions on Freshservice assets and asset types.
 
@@ -432,7 +445,11 @@ def register_assets_tools(mcp) -> None:
           asset_tag, description, user_id, location_id, department_id,
           agent_id, group_id, assigned_on, workspace_id, type_fields,
           asset_fields (update alternative payload),
-          parent_asset_type_id / visible (create_type).
+          parent_asset_type_id, description (create_type).
+
+        Note: 'visible' is not settable via the API — Freshservice rejects it
+        on asset-type create. It is accepted here but ignored, and the
+        response carries a warning saying so. Set visibility in the admin UI.
         """
         action = normalize_action(action, _WRITE_ASSET)
         err = reject_unless_in(action, _WRITE_ASSET, "manage_asset", "read_asset")
